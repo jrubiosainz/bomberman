@@ -443,30 +443,90 @@ function moveEnemies(state: GameState, dt: number): GameState {
   const enemies = state.enemies.map((enemy) => {
     if (!enemy.alive) return enemy;
 
-    const speed = enemy.speed * dt;
-    let newX = enemy.position.x + enemy.direction.dc * speed;
-    let newY = enemy.position.y + enemy.direction.dr * speed;
+    // Current tile center (where the enemy "is")
+    const curRow = enemy.gridPos.row;
+    const curCol = enemy.gridPos.col;
 
-    // Check if next position is walkable
-    const nextGrid = pixelToGrid(newX, newY);
-    const canMove = isWalkable(state.grid, nextGrid.row, nextGrid.col, state.bombs);
+    // Target tile center the enemy is moving toward
+    const targetRow = curRow + enemy.direction.dr;
+    const targetCol = curCol + enemy.direction.dc;
+    const target = gridCenter(targetRow, targetCol);
 
-    if (!canMove) {
-      // Hit a wall or bomb, pick new random direction
-      const newDir = randomDirection();
+    // Check if the target tile is walkable; if not, pick a new direction now
+    if (!isWalkable(state.grid, targetRow, targetCol, state.bombs)) {
+      const newDir = pickDirection(state, curRow, curCol, enemy.direction);
       return { ...enemy, direction: newDir };
     }
 
-    // Move enemy
-    const gridPos = pixelToGrid(newX, newY);
+    // Move toward the target center
+    const step = enemy.speed * dt;
+    let newX = enemy.position.x + enemy.direction.dc * step;
+    let newY = enemy.position.y + enemy.direction.dr * step;
+
+    // Check if we've reached or overshot the target center
+    const reachedX =
+      enemy.direction.dc === 0 ||
+      (enemy.direction.dc > 0 ? newX >= target.x : newX <= target.x);
+    const reachedY =
+      enemy.direction.dr === 0 ||
+      (enemy.direction.dr > 0 ? newY >= target.y : newY <= target.y);
+
+    if (reachedX && reachedY) {
+      // Snap to the target tile center
+      newX = target.x;
+      newY = target.y;
+      const newGridPos = { row: targetRow, col: targetCol };
+
+      // Pick next direction from the new tile
+      const newDir = pickDirection(state, targetRow, targetCol, enemy.direction);
+      return {
+        ...enemy,
+        position: { x: newX, y: newY },
+        gridPos: newGridPos,
+        direction: newDir,
+      };
+    }
+
+    // Still in transit — keep moving, gridPos stays at current tile
     return {
       ...enemy,
       position: { x: newX, y: newY },
-      gridPos,
     };
   });
 
   return { ...state, enemies };
+}
+
+/** Pick the next direction for an enemy at (row, col).
+ *  Prefers to continue straight if possible (classic Bomberman AI),
+ *  otherwise picks a random walkable direction. */
+function pickDirection(
+  state: GameState,
+  row: number,
+  col: number,
+  current: { dr: number; dc: number },
+): { dr: number; dc: number } {
+  const dirs = [
+    { dr: -1, dc: 0 },
+    { dr: 1, dc: 0 },
+    { dr: 0, dc: -1 },
+    { dr: 0, dc: 1 },
+  ];
+
+  const walkable = dirs.filter((d) =>
+    isWalkable(state.grid, row + d.dr, col + d.dc, state.bombs),
+  );
+
+  if (walkable.length === 0) return current; // stuck — keep facing same way
+
+  // Prefer continuing straight
+  const straight = walkable.find((d) => d.dr === current.dr && d.dc === current.dc);
+  if (straight) {
+    // 75% chance to keep going straight (classic Bomberman feel)
+    if (Math.random() < 0.75) return straight;
+  }
+
+  return walkable[Math.floor(Math.random() * walkable.length)];
 }
 
 function checkEnemyCollision(state: GameState): GameState {
