@@ -3,6 +3,7 @@
 A classic Bomberman game with cartoon-style graphics, built with **TypeScript**, **HTML5 Canvas**, and **Vite**.
 
 <!-- screenshot -->
+<img width="1015" height="721" alt="image" src="https://github.com/user-attachments/assets/852a7efc-2484-46fd-a48e-8336cd1a01c6" />
 
 ## 🎮 Quick Start
 
