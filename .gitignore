@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Squad AI team state (not needed to run the game)
+.squad/
+.copilot/
+.github/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

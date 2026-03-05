@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>💣 Cartoon Bomberman 💣</title>
+  <style>
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+    }
+    
+    body {
+      background: linear-gradient(135deg, #1a1a2e 0%, #2d3561 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Comic Sans MS', 'Arial', sans-serif;
+    }
+    
+    h1 {
+      color: #ffd93d;
+      font-size: 48px;
+      text-shadow: 4px 4px 0px #2a2a2a, 
+                   -2px -2px 0px #ff6b35;
+      margin-bottom: 20px;
+      letter-spacing: 3px;
+    }
+    
+    canvas {
+      border: 6px solid #2a2a2a;
+      border-radius: 8px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5),
+                  0 0 20px rgba(255, 217, 61, 0.3);
+      image-rendering: pixelated;
+      image-rendering: -moz-crisp-edges;
+      image-rendering: crisp-edges;
+    }
+    
+    .info {
+      margin-top: 20px;
+      color: #fff;
+      text-align: center;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+    
+    .info kbd {
+      background: #2a2a2a;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 2px solid #444;
+      font-family: monospace;
+      margin: 0 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>💣 BOMBERMAN 💣</h1>
+  <canvas id="game" width="780" height="660"></canvas>
+  <div class="info">
+    <p>
+      Move: <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> 
+      &nbsp;|&nbsp; 
+      Bomb: <kbd>SPACE</kbd>
+      &nbsp;|&nbsp;
+      Restart: <kbd>R</kbd>
+    </p>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
