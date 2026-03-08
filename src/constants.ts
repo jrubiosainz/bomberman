@@ -124,7 +124,7 @@ export const LLM_MODELS = [
 ];
 
 export const LLM_API_ENDPOINT = '/api/chat/completions';
-export const LLM_TICK_INTERVAL = 0.5;
+export const LLM_TICK_INTERVAL = 1.5; // Base interval — backoff will increase on errors
 
 // ── Legacy Config (for backward compatibility) ────────────────
 

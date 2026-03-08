@@ -14,6 +14,8 @@ export class LLMPlayer {
   private tickAccumulator: number = 0;
   private moveHistory: string[] = [];
   private errorCount: number = 0;
+  private currentInterval: number = LLM_TICK_INTERVAL;
+  private retryAfter: number = 0; // Cooldown timer for rate limit recovery
 
   constructor(config: LLMConfig) {
     this.config = config;
@@ -33,13 +35,29 @@ export class LLMPlayer {
   async tick(state: GameState, dt: number): Promise<InputAction[]> {
     this.tickAccumulator += dt;
 
+    // Count down cooldown timer if in recovery mode
+    if (this.retryAfter > 0) {
+      this.retryAfter -= dt;
+      if (this.retryAfter <= 0) {
+        // Reset after cooldown expires
+        this.retryAfter = 0;
+        this.errorCount = 0;
+        this.currentInterval = LLM_TICK_INTERVAL;
+        this.lastReasoning = 'Recovered from errors, resuming...';
+      } else {
+        // Display countdown
+        this.lastReasoning = `Rate limited, retrying in ${Math.ceil(this.retryAfter)}s...`;
+      }
+      return this.pendingAction ? [this.pendingAction] : [];
+    }
+
     // Return pending action if LLM is still thinking
     if (this.isThinking) {
       return this.pendingAction ? [this.pendingAction] : [];
     }
 
     // Request new decision when interval elapsed
-    if (this.tickAccumulator >= LLM_TICK_INTERVAL) {
+    if (this.tickAccumulator >= this.currentInterval) {
       this.tickAccumulator = 0;
       this.requestLLMDecision(state);
     }
@@ -56,7 +74,10 @@ export class LLMPlayer {
       
       this.pendingAction = action.action;
       this.lastReasoning = action.reasoning;
+      
+      // Success — reset error state and interval
       this.errorCount = 0;
+      this.currentInterval = LLM_TICK_INTERVAL;
 
       // Track move history for learning
       if (action.action) {
@@ -69,14 +90,20 @@ export class LLMPlayer {
       console.error('LLM error:', error);
       this.errorCount++;
       
+      // Exponential backoff — double the interval on each error (max 30 seconds)
+      this.currentInterval = Math.min(this.currentInterval * 2, 30);
+      
       // Fallback to random movement on error
       this.pendingAction = this.randomAction();
-      this.lastReasoning = `Error: ${error instanceof Error ? error.message : 'Unknown error'}. Using random action.`;
       
-      // If too many errors, give up
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.lastReasoning = `Error (${this.errorCount}): ${errorMsg}. Retrying in ${this.currentInterval.toFixed(1)}s...`;
+      
+      // If too many errors, enter cooldown mode instead of giving up permanently
       if (this.errorCount > 5) {
+        this.retryAfter = 10; // 10-second cooldown
         this.pendingAction = InputAction.Wait;
-        this.lastReasoning = 'Too many errors, waiting...';
+        this.lastReasoning = 'Too many errors. Cooling down for 10s...';
       }
     } finally {
       this.isThinking = false;
@@ -93,8 +120,26 @@ export class LLMPlayer {
     output += `Lives: ${state.lives} | Score: ${state.score}\n`;
     output += `Player Stats: ${player.maxBombs} bombs, range ${player.bombRange}, speed ${Math.round(player.speed)}\n\n`;
 
+    // For large grids (>15 width), send only a window around the player
+    const COMPACT_THRESHOLD = 15;
+    const WINDOW_SIZE = 11; // 11x11 window centered on player
+    const useCompactView = grid[0].length > COMPACT_THRESHOLD;
+
+    let startRow = 0, endRow = grid.length;
+    let startCol = 0, endCol = grid[0].length;
+
+    if (useCompactView) {
+      const halfWindow = Math.floor(WINDOW_SIZE / 2);
+      startRow = Math.max(0, player.gridPos.row - halfWindow);
+      endRow = Math.min(grid.length, player.gridPos.row + halfWindow + 1);
+      startCol = Math.max(0, player.gridPos.col - halfWindow);
+      endCol = Math.min(grid[0].length, player.gridPos.col + halfWindow + 1);
+      output += `GRID (${WINDOW_SIZE}x${WINDOW_SIZE} window around player):\n`;
+    } else {
+      output += 'GRID:\n';
+    }
+
     // Grid visualization
-    output += 'GRID:\n';
     for (let row = 0; row < grid.length; row++) {
       let line = '';
       for (let col = 0; col < grid[row].length; col++) {
@@ -137,9 +182,14 @@ export class LLMPlayer {
     if (aliveEnemies.length === 0) {
       output += 'None remaining!\n';
     } else {
+      // If using compact view, list ALL enemy positions (even outside window)
       aliveEnemies.forEach(e => {
         const dist = Math.abs(e.gridPos.row - player.gridPos.row) + Math.abs(e.gridPos.col - player.gridPos.col);
-        output += `- Enemy at (${e.gridPos.row}, ${e.gridPos.col}), distance: ${dist}\n`;
+        const inWindow = !useCompactView || 
+                        (e.gridPos.row >= startRow && e.gridPos.row < endRow && 
+                         e.gridPos.col >= startCol && e.gridPos.col < endCol);
+        const marker = inWindow ? '' : ' (outside window)';
+        output += `- Enemy at (${e.gridPos.row}, ${e.gridPos.col}), distance: ${dist}${marker}\n`;
       });
     }
 
@@ -209,6 +259,14 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
     });
 
     if (!response.ok) {
+      // Check for rate limit (HTTP 429)
+      if (response.status === 429) {
+        // Try to extract Retry-After header
+        const retryAfter = response.headers.get('Retry-After');
+        const waitTime = retryAfter ? parseInt(retryAfter, 10) : 10;
+        this.retryAfter = waitTime;
+        throw new Error(`Rate limited (HTTP 429). Retrying after ${waitTime}s...`);
+      }
       throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
     }
 
