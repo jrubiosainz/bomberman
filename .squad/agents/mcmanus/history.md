@@ -9,6 +9,18 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-03-08 — Valid Model IDs for models.inference.ai.azure.com
+**Tested and confirmed working (200 OK):**
+- OpenAI: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`
+- Meta: `Meta-Llama-3.1-405B-Instruct`, `Meta-Llama-3.1-8B-Instruct`
+- DeepSeek: `DeepSeek-R1`
+- Cohere: `Cohere-command-r-plus-08-2024`
+- Mistral: `Ministral-3B`
+
+**Broken (400 Bad Request):** ALL claude-* models, ALL gpt-5.* models, ALL o1/o3/o4 reasoning models, Mistral-large/small/Nemo, Phi models. These are Copilot CLI internal IDs — they don't map to GitHub Models API.
+
+**Best for Bomberman:** gpt-4.1 (fast, smart, follows JSON instructions well).
+
 ### 2025-01-XX — Hollow Depths Core Engine v1
 **Complete metroidvania engine built in pure functional style:**
 - **Physics Engine**: Gravity, terminal velocity, friction, AABB tile collision. Variable jump height (hold = higher), wall-slide with reduced gravity when against wall + holding direction, dash with cooldown.

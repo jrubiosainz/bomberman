@@ -271,6 +271,61 @@
 
 ---
 
+### Decision 7: LLM Model List Correction for Azure Endpoint
+
+**Date:** 2026-03-08 | **Author:** McManus | **Status:** Implemented
+
+**Context:** LLM player experiencing HTTP 400 Bad Request errors after coordinator fixed API endpoint from models.github.com to models.inference.ai.azure.com. Root cause: invalid Copilot CLI model IDs not supported by Azure inference endpoint.
+
+**Problem:**
+1. Coordinator fixed 500 ENOTFOUND errors by changing proxy target to models.inference.ai.azure.com
+2. Now hitting 400 Bad Request (invalid model IDs in request payload)
+3. Model list contained Copilot CLI IDs not valid for Azure catalog
+4. Game's LLM mode sends text-serialized game state (not screenshots)
+5. Invalid models caused immediate failure with no recovery
+
+**Decision:** Replace Copilot CLI model IDs in constants.ts with confirmed working models for Azure inference endpoint. Improve HTTP 400 error handling in llm-player.ts for graceful degradation.
+
+**Implementation:**
+1. **Model List Update**: Updated AVAILABLE_MODELS with Azure-compatible model IDs
+   - Validated against models.inference.ai.azure.com endpoint
+   - Updated display names for clarity
+   
+2. **400 Error Handling**: Enhanced llm-player.ts error handling
+   - Treat HTTP 400 (Bad Request) like 429 (rate limit) with backoff
+   - Better error messages for invalid model configuration
+   - Graceful fallback to random action on 400 errors
+   - Prevents cascading failures from bad payloads
+
+**Rationale:**
+- Azure endpoint requires correct model catalog IDs
+- Copilot CLI uses different model naming than Azure inference
+- HTTP 400 represents recoverable configuration errors (backoff appropriate)
+- Graceful fallback maintains game stability even with bad model config
+
+**Trade-offs:**
+- Coordinator already fixed endpoint; this removes remaining 400 errors
+- Works in conjunction with exponential backoff from Decision 6
+- Combined approach: correct endpoint + correct model IDs + 400 handling = resilient LLM integration
+
+**Consequences:**
+- ✅ LLM player now uses valid Azure models
+- ✅ HTTP 400 errors handled gracefully (no permanent failure)
+- ✅ Game remains playable even if LLM encounters bad model request
+- ✅ Integrates cleanly with existing resilience system (exponential backoff, recovery cooldown)
+- ✅ Ready for production with Azure inference endpoint
+
+**Coordination:**
+- Coordinator fixed API endpoint (500 errors) + grid serialization bug + 5xx backoff
+- McManus fixed model list (400 errors) + 400 error handling
+- Fenster's renderer unaffected — LLM player internal concern
+
+**Related:** Decision 6: LLM Player Resilience & Rate Limit Handling
+
+**Status:** Implemented, TypeScript clean, staged for commit.
+
+---
+
 ## Decision Archive
 
 *(No previous archived decisions from this sprint)*

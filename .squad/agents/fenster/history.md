@@ -457,3 +457,24 @@ McManus completed exponential backoff and rate limiting resilience for LLM playe
 
 **Related Decision:** Decision 6: LLM Player Resilience & Rate Limit Handling
 
+
+### 2026-03-08: LLM Model List Update — McManus Fix
+
+**Cross-Agent Update — Model Configuration Change:**
+
+McManus fixed HTTP 400 Bad Request errors by updating constants.ts with valid Azure model IDs.
+
+**Changes to LLM Configuration:**
+- **constants.ts AVAILABLE_MODELS:** Replaced Copilot CLI model IDs with confirmed working models for models.inference.ai.azure.com
+- **Model display names:** Updated for clarity
+- **LLM menu impact:** Users can now select from properly validated model list
+
+**For UI Rendering:**
+- Model selector in LLMSetup menu displays from AVAILABLE_MODELS array
+- Display names may have changed — verify menu items render correctly
+- No changes to renderer logic required
+- If model display changed significantly, UI text wrapping in renderLLMSetup might need adjustment
+
+**Related Decision:** Decision 7: LLM Model List Correction for Azure Endpoint
+
+**Coordination Note:** Combined with coordinator's endpoint fix (models.github.com → models.inference.ai.azure.com) and McManus's 400 error handling, LLM player should now be fully resilient for production.
