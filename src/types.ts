@@ -174,7 +174,6 @@ export interface LevelConfig {
 export interface LLMConfig {
   model: string;
   modelDisplayName: string;
-  apiKey: string;
   endpoint: string;
 }
 

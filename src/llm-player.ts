@@ -4,6 +4,7 @@ import { LLM_TICK_INTERVAL } from './constants';
 /**
  * LLM-powered player controller.
  * Makes decisions by sending the game state to an LLM and parsing its response.
+ * Auth is handled server-side by the Vite proxy — no API key needed.
  */
 export class LLMPlayer {
   private config: LLMConfig;
@@ -16,6 +17,17 @@ export class LLMPlayer {
 
   constructor(config: LLMConfig) {
     this.config = config;
+  }
+
+  /** Check whether the Vite proxy can authenticate with GitHub. */
+  static async checkAuth(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/auth/status');
+      const data = await res.json();
+      return data.authenticated === true;
+    } catch {
+      return false;
+    }
   }
 
   async tick(state: GameState, dt: number): Promise<InputAction[]> {
@@ -184,7 +196,6 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
       },
       body: JSON.stringify({
         model: this.config.model,
