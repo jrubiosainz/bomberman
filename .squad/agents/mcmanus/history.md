@@ -240,3 +240,74 @@
 - `gh auth token` is called fresh on each proxy request (tokens can rotate).
 - Frontend is zero-config: if `gh auth login` has been run, LLM mode just works.
 - Menu items reduced from 4 (Model, API Key, Level, Start) to 3 (Model, Level, Start) since auth is automatic.
+
+### 2026-03-08 — LLM Player Resilience: Rate Limit Recovery & Exponential Backoff
+
+**Problem:** LLM player hitting "Too many errors, waiting..." immediately on larger levels (Level 2+) with heavy models like Claude Opus 4.5. Root causes:
+- `LLM_TICK_INTERVAL = 0.5s` — too aggressive, saturated GitHub Models API rate limits instantly
+- `errorCount > 5` threshold gave up PERMANENTLY with no recovery
+- No exponential backoff — always retried at same 0.5s interval on error
+- Large grid state (15×13+ grids) sent excessive tokens per request
+- No HTTP 429 rate limit detection
+
+**Solution — Resilient LLM Controller:**
+- **Base interval increased**: `LLM_TICK_INTERVAL` 0.5s → 1.5s (less aggressive baseline)
+- **Exponential backoff**: On each error, interval doubles (max 30s). Resets on success.
+- **Cooldown recovery**: After 5 errors, enter 10s cooldown mode, then reset and retry. Never permanently give up.
+- **Rate limit detection**: HTTP 429 responses extract `Retry-After` header, set `retryAfter` timer.
+- **Compact state for large grids**: Grids >15 wide send only 11×11 window centered on player. Enemy positions outside window listed with "(outside window)" marker.
+- **Better error display**: Shows "Rate limited, retrying in Xs..." with live countdown instead of "Too many errors, waiting..."
+- **Always retry**: LLM will always eventually recover and try again. User can press ESC to exit.
+
+**Implementation Pattern — Resilient Async Tick with Backoff:**
+```typescript
+private currentInterval: number = LLM_TICK_INTERVAL;
+private retryAfter: number = 0; // Cooldown timer
+
+tick(state, dt) {
+  if (retryAfter > 0) {
+    retryAfter -= dt;
+    if (retryAfter <= 0) { /* reset state */ }
+    return []; // Wait during cooldown
+  }
+  // Normal tick with currentInterval
+}
+
+requestLLMDecision() {
+  try {
+    // Success
+    errorCount = 0;
+    currentInterval = LLM_TICK_INTERVAL; // Reset
+  } catch (error) {
+    errorCount++;
+    currentInterval = Math.min(currentInterval * 2, 30); // Exponential backoff
+    if (errorCount > 5) {
+      retryAfter = 10; // Enter cooldown
+    }
+  }
+}
+```
+
+**Key Patterns:**
+- State serialization checks `grid[0].length > COMPACT_THRESHOLD` to decide compact vs full grid view.
+- Compact view uses `Math.max(0, player.row - halfWindow)` to clamp window boundaries.
+- HTTP 429 detection: `if (response.status === 429) { retryAfter = parseInt(headers['Retry-After']) }`
+- Countdown display: `lastReasoning = "Rate limited, retrying in ${Math.ceil(retryAfter)}s..."`
+- Never set permanent failure state — always eventually retry after cooldown.
+
+**Files Modified:**
+- `src/constants.ts`: `LLM_TICK_INTERVAL` 0.5 → 1.5
+- `src/llm-player.ts`: Added `currentInterval`, `retryAfter` fields, exponential backoff logic, HTTP 429 handling, compact state serialization, recovery countdown
+
+**User Experience:**
+- Large models (Opus 4.5) no longer immediately fail on Level 2+
+- LLM self-recovers from rate limits after cooldown
+- Compact state reduces token usage by ~60% on large grids (21×15 grid sends 11×11 = 121 cells instead of 315)
+- User sees helpful countdown: "Retrying in 7s..." instead of dead "Too many errors, waiting..."
+
+**Technical Details:**
+- Exponential backoff prevents thundering herd on rate limit recovery
+- Cooldown pattern borrowed from circuit breaker pattern (open → half-open → closed)
+- Compact view window size (11×11) chosen to balance context vs token usage
+- Enemy positions always listed even if outside window — critical for strategy
+- HTTP 429 `Retry-After` can be seconds (int) or HTTP-date (ignored for simplicity, default to 10s)
