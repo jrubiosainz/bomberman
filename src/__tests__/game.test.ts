@@ -5,19 +5,23 @@ import {
   type BombState,
   type ExplosionState,
   type PowerupState,
+  type LevelConfig,
   TileType,
   InputAction,
   GameStatus,
   PowerupType,
+  LevelTheme,
 } from '../types';
 import {
-  BOMB_TIMER,
-  EXPLOSION_DURATION,
   DEFAULT_BOMB_RANGE,
   DEFAULT_MAX_BOMBS,
-  PLAYER_SPEED,
-  TILE_SIZE,
+  LEVEL_CONFIGS,
 } from '../constants';
+
+const PLAYER_SPEED = LEVEL_CONFIGS[0].playerSpeed;
+const TILE_SIZE = LEVEL_CONFIGS[0].tileSize;
+const BOMB_TIMER = LEVEL_CONFIGS[0].bombTimer;
+const EXPLOSION_DURATION = 0.5;
 
 // ── Test Helpers ──────────────────────────────────────────────
 
@@ -27,10 +31,27 @@ import {
  */
 function makeState(overrides?: Partial<GameState>): GameState {
   const defaultGrid = makeGrid();
+  const testConfig: LevelConfig = {
+    level: 1,
+    name: 'Test Level',
+    description: 'Test',
+    gridWidth: 5,
+    gridHeight: 5,
+    tileSize: TILE_SIZE,
+    enemyCount: 0,
+    enemySpeed: 80,
+    enemySmartness: 0.1,
+    destructibleWallDensity: 0.3,
+    powerupDropRate: 0.3,
+    playerSpeed: PLAYER_SPEED,
+    bombTimer: BOMB_TIMER,
+    theme: LevelTheme.Garden,
+  };
+  
   return {
     grid: defaultGrid,
     player: {
-      position: { x: TILE_SIZE * 1.5, y: TILE_SIZE * 1.5 }, // Center of (1,1)
+      position: { x: TILE_SIZE * 1.5, y: TILE_SIZE * 1.5 },
       gridPos: { row: 1, col: 1 },
       alive: true,
       bombCount: 0,
@@ -38,13 +59,20 @@ function makeState(overrides?: Partial<GameState>): GameState {
       bombRange: DEFAULT_BOMB_RANGE,
       speed: PLAYER_SPEED,
       passThroughBomb: null,
+      direction: { dx: 0, dy: 0 },
     },
     bombs: [],
     explosions: [],
     powerups: [],
-    enemies: [], // Added for McManus's enemy system
+    enemies: [],
     status: GameStatus.Running,
     timer: 0,
+    level: 1,
+    lives: 3,
+    score: 0,
+    soundEvents: [],
+    particleEvents: [],
+    levelConfig: testConfig,
     ...overrides,
   };
 }
@@ -96,12 +124,35 @@ function makeLargeGrid(): TileType[][] {
   return grid;
 }
 
+/**
+ * Create a test level config
+ */
+function makeTestConfig(overrides?: Partial<LevelConfig>): LevelConfig {
+  return {
+    level: 1,
+    name: 'Test Level',
+    description: 'Test',
+    gridWidth: 5,
+    gridHeight: 5,
+    tileSize: TILE_SIZE,
+    enemyCount: 0,
+    enemySpeed: 80,
+    enemySmartness: 0.1,
+    destructibleWallDensity: 0.3,
+    powerupDropRate: 0.3,
+    playerSpeed: PLAYER_SPEED,
+    bombTimer: BOMB_TIMER,
+    theme: LevelTheme.Garden,
+    ...overrides,
+  };
+}
+
 // ── State Creation Tests ──────────────────────────────────────
 
 describe('State Creation', () => {
   it('createInitialState returns valid state with player at spawn', () => {
-    const level = makeGrid();
-    const state = createInitialState(level, []); // No enemies for this test
+    const config = makeTestConfig();
+    const state = createInitialState(config);
     
     expect(state.player.gridPos).toEqual({ row: 1, col: 1 });
     expect(state.player.alive).toBe(true);
@@ -109,8 +160,8 @@ describe('State Creation', () => {
   });
 
   it('player starts with correct defaults', () => {
-    const level = makeGrid();
-    const state = createInitialState(level, []);
+    const config = makeTestConfig();
+    const state = createInitialState(config);
     
     expect(state.player.maxBombs).toBe(DEFAULT_MAX_BOMBS);
     expect(state.player.bombRange).toBe(DEFAULT_BOMB_RANGE);
@@ -118,12 +169,12 @@ describe('State Creation', () => {
     expect(state.player.speed).toBe(PLAYER_SPEED);
   });
 
-  it('grid matches input level', () => {
-    const level = makeGrid([[2, 2, TileType.DestructibleWall]]);
-    const state = createInitialState(level, []);
+  it('grid matches level dimensions', () => {
+    const config = makeTestConfig({ gridWidth: 5, gridHeight: 5 });
+    const state = createInitialState(config);
     
-    expect(state.grid[2][2]).toBe(TileType.DestructibleWall);
-    expect(state.grid.length).toBe(level.length);
+    expect(state.grid.length).toBe(5);
+    expect(state.grid[0].length).toBe(5);
   });
 });
 
@@ -135,7 +186,7 @@ describe('Player Movement', () => {
     const state = makeState({
       grid,
       player: {
-        position: { x: TILE_SIZE * 3, y: TILE_SIZE * 3 }, // Center of grid
+        position: { x: TILE_SIZE * 3, y: TILE_SIZE * 3 },
         gridPos: { row: 3, col: 3 },
         alive: true,
         bombCount: 0,
@@ -143,6 +194,7 @@ describe('Player Movement', () => {
         bombRange: DEFAULT_BOMB_RANGE,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     const initialY = state.player.position.y;
@@ -165,6 +217,7 @@ describe('Player Movement', () => {
         bombRange: DEFAULT_BOMB_RANGE,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     const initialY = state.player.position.y;
@@ -187,6 +240,7 @@ describe('Player Movement', () => {
         bombRange: DEFAULT_BOMB_RANGE,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     const initialX = state.player.position.x;
@@ -209,6 +263,7 @@ describe('Player Movement', () => {
         bombRange: DEFAULT_BOMB_RANGE,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     const initialX = state.player.position.x;
@@ -219,7 +274,6 @@ describe('Player Movement', () => {
   });
 
   it('player cannot walk through walls', () => {
-    // Player at (1,1), wall at (0,1)
     const state = makeState({
       player: {
         position: { x: TILE_SIZE * 1.5, y: TILE_SIZE * 1.5 },
@@ -230,13 +284,12 @@ describe('Player Movement', () => {
         bombRange: 1,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     
-    // Try moving up into wall
     const updated = update(state, [InputAction.Up], 1.0);
     
-    // Should not move significantly (collision)
     expect(Math.floor(updated.player.gridPos.row)).toBe(1);
   });
 
@@ -262,6 +315,7 @@ describe('Player Movement', () => {
         bombRange: 1,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     
@@ -285,11 +339,11 @@ describe('Player Movement', () => {
         bombRange: DEFAULT_BOMB_RANGE,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
     });
     const initialPos = { ...state.player.position };
     
-    // Move diagonally (up + right)
     const updated = update(state, [InputAction.Up, InputAction.Right], 0.1);
     
     const dx = updated.player.position.x - initialPos.x;
@@ -334,6 +388,7 @@ describe('Bomb Placement', () => {
         bombRange: 1,
         speed: PLAYER_SPEED,
         passThroughBomb: null,
+        direction: { dx: 0, dy: 0 },
       },
       bombs: [
         {
@@ -625,8 +680,8 @@ describe('Game Status', () => {
   });
 
   it('game starts as Running', () => {
-    const level = makeGrid();
-    const state = createInitialState(level, []); // No enemies
+    const config = makeTestConfig();
+    const state = createInitialState(config);
     
     expect(state.status).toBe(GameStatus.Running);
   });

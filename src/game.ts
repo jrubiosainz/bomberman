@@ -6,37 +6,40 @@ import {
   type EnemyState,
   type PowerupState,
   type GridPosition,
+  type LevelConfig,
   TileType,
   InputAction,
   GameStatus,
   PowerupType,
+  SoundEvent,
+  ParticleEventType,
 } from './types';
 import {
-  TILE_SIZE,
-  PLAYER_SPEED,
   DEFAULT_BOMB_RANGE,
   DEFAULT_MAX_BOMBS,
-  BOMB_TIMER,
   EXPLOSION_DURATION,
-  GRID_WIDTH,
-  GRID_HEIGHT,
-  ENEMY_SPEED,
-  POWERUP_DROP_RATE,
+  INITIAL_LIVES,
+  SCORE_ENEMY_KILL,
+  SCORE_WALL_BREAK,
+  SCORE_POWERUP,
+  SCORE_LEVEL_CLEAR,
+  LEVEL_CONFIGS,
 } from './constants';
+import { generateLevel } from './levels';
 
 // ── Helpers ───────────────────────────────────────────────────
 
-function pixelToGrid(x: number, y: number): GridPosition {
+function pixelToGrid(x: number, y: number, tileSize: number): GridPosition {
   return {
-    col: Math.floor(x / TILE_SIZE),
-    row: Math.floor(y / TILE_SIZE),
+    col: Math.floor(x / tileSize),
+    row: Math.floor(y / tileSize),
   };
 }
 
-function gridCenter(row: number, col: number): { x: number; y: number } {
+function gridCenter(row: number, col: number, tileSize: number): { x: number; y: number } {
   return {
-    x: col * TILE_SIZE + TILE_SIZE / 2,
-    y: row * TILE_SIZE + TILE_SIZE / 2,
+    x: col * tileSize + tileSize / 2,
+    y: row * tileSize + tileSize / 2,
   };
 }
 
@@ -44,10 +47,12 @@ function isWalkable(
   grid: TileType[][],
   row: number,
   col: number,
+  gridWidth: number,
+  gridHeight: number,
   bombs: BombState[],
   excludeBombPos?: GridPosition | null,
 ): boolean {
-  if (row < 0 || row >= GRID_HEIGHT || col < 0 || col >= GRID_WIDTH) return false;
+  if (row < 0 || row >= gridHeight || col < 0 || col >= gridWidth) return false;
   if (grid[row][col] !== TileType.Empty) return false;
   // Bombs block movement (skip the pass-through bomb the player is still standing on)
   if (
@@ -64,11 +69,10 @@ function isWalkable(
 
 // ── State Creation ────────────────────────────────────────────
 
-export function createInitialState(
-  level: TileType[][],
-  enemySpawns: GridPosition[],
-): GameState {
-  const spawn = gridCenter(1, 1);
+export function createInitialState(levelConfig: LevelConfig, lives?: number, score?: number): GameState {
+  const { grid, enemySpawns } = generateLevel(levelConfig);
+  const spawn = gridCenter(1, 1, levelConfig.tileSize);
+  
   const player: PlayerState = {
     position: { x: spawn.x, y: spawn.y },
     gridPos: { row: 1, col: 1 },
@@ -76,25 +80,26 @@ export function createInitialState(
     bombCount: 0,
     maxBombs: DEFAULT_MAX_BOMBS,
     bombRange: DEFAULT_BOMB_RANGE,
-    speed: PLAYER_SPEED,
+    speed: levelConfig.playerSpeed,
     passThroughBomb: null,
+    direction: { dx: 0, dy: 0 },
   };
 
   // Initialize enemies at spawn positions
   const enemies: EnemyState[] = enemySpawns.map((spawn, index) => {
-    const center = gridCenter(spawn.row, spawn.col);
+    const center = gridCenter(spawn.row, spawn.col, levelConfig.tileSize);
     return {
       id: index,
       position: { x: center.x, y: center.y },
       gridPos: { row: spawn.row, col: spawn.col },
       alive: true,
-      speed: ENEMY_SPEED,
+      speed: levelConfig.enemySpeed,
       direction: randomDirection(),
     };
   });
 
   return {
-    grid: level.map((row) => [...row]),
+    grid: grid.map((row) => [...row]),
     player,
     bombs: [],
     explosions: [],
@@ -102,6 +107,12 @@ export function createInitialState(
     enemies,
     status: GameStatus.Running,
     timer: 0,
+    level: levelConfig.level,
+    lives: lives ?? INITIAL_LIVES,
+    score: score ?? 0,
+    soundEvents: [],
+    particleEvents: [],
+    levelConfig,
   };
 }
 
@@ -130,7 +141,11 @@ export function update(state: GameState, actions: InputAction[], dt: number): Ga
       passThroughBomb: state.player.passThroughBomb
         ? { ...state.player.passThroughBomb }
         : null,
+      direction: { ...state.player.direction },
     },
+    soundEvents: [], // Clear events from previous frame
+    particleEvents: [],
+    levelConfig: state.levelConfig,
   };
 
   next = movePlayer(next, actions, dt);
@@ -159,7 +174,15 @@ function movePlayer(state: GameState, actions: InputAction[], dt: number): GameS
   if (actions.includes(InputAction.Left)) dx -= 1;
   if (actions.includes(InputAction.Right)) dx += 1;
 
-  if (dx === 0 && dy === 0) return state;
+  // Update direction for animation
+  const direction = dx !== 0 || dy !== 0 ? { dx, dy } : player.direction;
+
+  if (dx === 0 && dy === 0) {
+    return {
+      ...state,
+      player: { ...player, direction },
+    };
+  }
 
   // Normalize diagonal movement
   const len = Math.sqrt(dx * dx + dy * dy);
@@ -170,25 +193,24 @@ function movePlayer(state: GameState, actions: InputAction[], dt: number): GameS
   const newX = player.position.x + dx * speed;
   const newY = player.position.y + dy * speed;
 
-  // Collision: check the bounding box corners against the grid
-  const halfSize = TILE_SIZE * 0.4; // slightly smaller than tile for forgiving collision
+  const tileSize = state.levelConfig.tileSize;
+  const halfSize = tileSize * 0.4;
 
-  const canMoveX = canMoveTo(state.grid, state.bombs, newX, player.position.y, halfSize, player.passThroughBomb);
-  const canMoveY = canMoveTo(state.grid, state.bombs, player.position.x, newY, halfSize, player.passThroughBomb);
+  const canMoveX = canMoveTo(state.grid, state.bombs, newX, player.position.y, halfSize, tileSize, state.levelConfig.gridWidth, state.levelConfig.gridHeight, player.passThroughBomb);
+  const canMoveY = canMoveTo(state.grid, state.bombs, player.position.x, newY, halfSize, tileSize, state.levelConfig.gridWidth, state.levelConfig.gridHeight, player.passThroughBomb);
 
   const finalX = canMoveX ? newX : player.position.x;
   const finalY = canMoveY ? newY : player.position.y;
 
-  const gridPos = pixelToGrid(finalX, finalY);
+  const gridPos = pixelToGrid(finalX, finalY, tileSize);
 
-  // Clear pass-through only when the player's ENTIRE bounding box has left the bomb tile
   let passThroughBomb = player.passThroughBomb;
   if (passThroughBomb) {
     const corners = [
-      pixelToGrid(finalX - halfSize, finalY - halfSize),
-      pixelToGrid(finalX + halfSize, finalY - halfSize),
-      pixelToGrid(finalX - halfSize, finalY + halfSize),
-      pixelToGrid(finalX + halfSize, finalY + halfSize),
+      pixelToGrid(finalX - halfSize, finalY - halfSize, tileSize),
+      pixelToGrid(finalX + halfSize, finalY - halfSize, tileSize),
+      pixelToGrid(finalX - halfSize, finalY + halfSize, tileSize),
+      pixelToGrid(finalX + halfSize, finalY + halfSize, tileSize),
     ];
     const stillOverlapping = corners.some(
       (c) => c.row === passThroughBomb!.row && c.col === passThroughBomb!.col,
@@ -205,6 +227,7 @@ function movePlayer(state: GameState, actions: InputAction[], dt: number): GameS
       position: { x: finalX, y: finalY },
       gridPos,
       passThroughBomb,
+      direction,
     },
   };
 }
@@ -215,9 +238,11 @@ function canMoveTo(
   x: number,
   y: number,
   half: number,
+  tileSize: number,
+  gridWidth: number,
+  gridHeight: number,
   excludeBombPos?: GridPosition | null,
 ): boolean {
-  // Check all four corners of the player's bounding box
   const corners = [
     { x: x - half, y: y - half },
     { x: x + half, y: y - half },
@@ -226,8 +251,8 @@ function canMoveTo(
   ];
 
   return corners.every((c) => {
-    const g = pixelToGrid(c.x, c.y);
-    return isWalkable(grid, g.row, g.col, bombs, excludeBombPos);
+    const g = pixelToGrid(c.x, c.y, tileSize);
+    return isWalkable(grid, g.row, g.col, gridWidth, gridHeight, bombs, excludeBombPos);
   });
 }
 
@@ -242,17 +267,18 @@ function handleBombPlacement(state: GameState, actions: InputAction[]): GameStat
   if (activeBombs >= player.maxBombs) return state;
 
   const pos = player.gridPos;
-  // Don't place if a bomb already exists here
   if (state.bombs.some((b) => b.position.row === pos.row && b.position.col === pos.col)) {
     return state;
   }
 
   const bomb: BombState = {
     position: { row: pos.row, col: pos.col },
-    timer: BOMB_TIMER,
+    timer: state.levelConfig.bombTimer,
     range: player.bombRange,
     owner: 0,
   };
+
+  const center = gridCenter(pos.row, pos.col, state.levelConfig.tileSize);
 
   return {
     ...state,
@@ -261,6 +287,12 @@ function handleBombPlacement(state: GameState, actions: InputAction[]): GameStat
       ...state.player,
       passThroughBomb: { row: pos.row, col: pos.col },
     },
+    soundEvents: [...state.soundEvents, SoundEvent.BombPlace],
+    particleEvents: [...state.particleEvents, {
+      type: ParticleEventType.BombSpark,
+      x: center.x,
+      y: center.y,
+    }],
   };
 }
 
@@ -272,8 +304,10 @@ function tickBombs(state: GameState, dt: number): GameState {
   let grid = state.grid;
   let powerups = [...state.powerups];
   let toDetonate: BombState[] = [];
+  let soundEvents = [...state.soundEvents];
+  let particleEvents = [...state.particleEvents];
+  let score = state.score;
 
-  // Check which bombs need to explode (timer expired)
   for (const bomb of state.bombs) {
     const updated = { ...bomb, timer: bomb.timer - dt };
     if (updated.timer <= 0) {
@@ -283,7 +317,6 @@ function tickBombs(state: GameState, dt: number): GameState {
     }
   }
 
-  // Chain explosions: check if existing explosions hit any remaining bombs
   for (const bomb of remaining) {
     const hit = state.explosions.some(
       (e) => e.position.row === bomb.position.row && e.position.col === bomb.position.col,
@@ -293,22 +326,49 @@ function tickBombs(state: GameState, dt: number): GameState {
     }
   }
 
-  // Remove chain-detonated bombs from remaining
   const finalRemaining = remaining.filter(
     (b) =>
       !toDetonate.some((d) => d.position.row === b.position.row && d.position.col === b.position.col),
   );
 
-  // Detonate all bombs
   for (const bomb of toDetonate) {
-    const result = detonate(grid, bomb);
+    const result = detonate(grid, bomb, state.levelConfig);
     grid = result.grid;
     powerups = [...powerups, ...result.powerups];
     newExplosions = [...newExplosions, ...result.explosions];
+    
+    soundEvents.push(SoundEvent.BombExplode);
+    
+    const center = gridCenter(bomb.position.row, bomb.position.col, state.levelConfig.tileSize);
+    particleEvents.push({
+      type: ParticleEventType.Explosion,
+      x: center.x,
+      y: center.y,
+    });
+
+    score += result.wallsDestroyed * SCORE_WALL_BREAK;
+
+    result.wallsDestroyed > 0 && soundEvents.push(SoundEvent.WallBreak);
+    for (let i = 0; i < result.wallsDestroyed; i++) {
+      const wallPos = result.explosions[Math.min(i + 1, result.explosions.length - 1)];
+      const wallCenter = gridCenter(wallPos.position.row, wallPos.position.col, state.levelConfig.tileSize);
+      particleEvents.push({
+        type: ParticleEventType.WallBreak,
+        x: wallCenter.x,
+        y: wallCenter.y,
+      });
+    }
   }
 
-  return { ...state, bombs: finalRemaining, explosions: newExplosions, grid, powerups,
-    // Clear pass-through if the bomb the player was overlapping got detonated
+  return {
+    ...state,
+    bombs: finalRemaining,
+    explosions: newExplosions,
+    grid,
+    powerups,
+    score,
+    soundEvents,
+    particleEvents,
     player: state.player.passThroughBomb &&
       toDetonate.some(
         (b) =>
@@ -323,15 +383,15 @@ function tickBombs(state: GameState, dt: number): GameState {
 function detonate(
   grid: TileType[][],
   bomb: BombState,
-): { grid: TileType[][]; explosions: ExplosionState[]; powerups: PowerupState[] } {
+  config: LevelConfig,
+): { grid: TileType[][]; explosions: ExplosionState[]; powerups: PowerupState[]; wallsDestroyed: number } {
   const newGrid = grid.map((r) => [...r]);
   const explosions: ExplosionState[] = [];
   const powerups: PowerupState[] = [];
+  let wallsDestroyed = 0;
 
-  // Center
   explosions.push({ position: { ...bomb.position }, timer: EXPLOSION_DURATION });
 
-  // Four directions
   const dirs = [
     { dr: -1, dc: 0 },
     { dr: 1, dc: 0 },
@@ -344,7 +404,7 @@ function detonate(
       const row = bomb.position.row + dir.dr * i;
       const col = bomb.position.col + dir.dc * i;
 
-      if (row < 0 || row >= GRID_HEIGHT || col < 0 || col >= GRID_WIDTH) break;
+      if (row < 0 || row >= config.gridHeight || col < 0 || col >= config.gridWidth) break;
 
       const tile = newGrid[row][col];
       if (tile === TileType.Wall) break;
@@ -353,19 +413,20 @@ function detonate(
 
       if (tile === TileType.DestructibleWall) {
         newGrid[row][col] = TileType.Empty;
-        // Random powerup drop
-        if (Math.random() < POWERUP_DROP_RATE) {
+        wallsDestroyed++;
+        
+        if (Math.random() < config.powerupDropRate) {
           powerups.push({
             position: { row, col },
             type: randomPowerupType(),
           });
         }
-        break; // Explosion stops after destroying a wall
+        break;
       }
     }
   }
 
-  return { grid: newGrid, explosions, powerups };
+  return { grid: newGrid, explosions, powerups, wallsDestroyed };
 }
 
 // ── Explosion Tick ────────────────────────────────────────────
@@ -386,19 +447,22 @@ function checkPowerupPickup(state: GameState): GameState {
 
   const remaining = state.powerups.filter((p) => {
     if (p.position.row === player.gridPos.row && p.position.col === player.gridPos.col) {
-      return false; // picked up
+      return false;
     }
     return true;
   });
 
   if (remaining.length === state.powerups.length) return state;
 
-  // Apply powerup effects
   const picked = state.powerups.filter(
     (p) => p.position.row === player.gridPos.row && p.position.col === player.gridPos.col,
   );
 
   let updatedPlayer = { ...player };
+  let score = state.score;
+  let soundEvents = [...state.soundEvents];
+  let particleEvents = [...state.particleEvents];
+
   for (const p of picked) {
     switch (p.type) {
       case 'extra_bomb':
@@ -411,9 +475,20 @@ function checkPowerupPickup(state: GameState): GameState {
         updatedPlayer = { ...updatedPlayer, speed: updatedPlayer.speed + 30 };
         break;
     }
+    
+    score += SCORE_POWERUP;
+    soundEvents.push(SoundEvent.PowerupPickup);
+    
+    const center = gridCenter(p.position.row, p.position.col, state.levelConfig.tileSize);
+    particleEvents.push({
+      type: ParticleEventType.PowerupPickup,
+      x: center.x,
+      y: center.y,
+      data: { powerupType: p.type },
+    });
   }
 
-  return { ...state, player: updatedPlayer, powerups: remaining };
+  return { ...state, player: updatedPlayer, powerups: remaining, score, soundEvents, particleEvents };
 }
 
 // ── Death Check ───────────────────────────────────────────────
@@ -427,11 +502,43 @@ function checkPlayerDeath(state: GameState): GameState {
   );
 
   if (hit) {
-    return {
-      ...state,
-      player: { ...player, alive: false },
-      status: GameStatus.Lost,
-    };
+    const newLives = state.lives - 1;
+    let soundEvents = [...state.soundEvents, SoundEvent.PlayerDeath];
+    let particleEvents = [...state.particleEvents, {
+      type: ParticleEventType.PlayerDeath,
+      x: player.position.x,
+      y: player.position.y,
+    }];
+
+    if (newLives <= 0) {
+      soundEvents.push(SoundEvent.GameOver);
+      return {
+        ...state,
+        player: { ...player, alive: false },
+        status: GameStatus.Lost,
+        lives: 0,
+        soundEvents,
+        particleEvents,
+      };
+    } else {
+      // Respawn player at starting position
+      const spawn = gridCenter(1, 1, state.levelConfig.tileSize);
+      return {
+        ...state,
+        player: {
+          ...player,
+          position: { x: spawn.x, y: spawn.y },
+          gridPos: { row: 1, col: 1 },
+          alive: true,
+          passThroughBomb: null,
+        },
+        lives: newLives,
+        bombs: [], // Clear bombs on respawn
+        explosions: [],
+        soundEvents,
+        particleEvents,
+      };
+    }
   }
 
   return state;
@@ -443,27 +550,22 @@ function moveEnemies(state: GameState, dt: number): GameState {
   const enemies = state.enemies.map((enemy) => {
     if (!enemy.alive) return enemy;
 
-    // Current tile center (where the enemy "is")
     const curRow = enemy.gridPos.row;
     const curCol = enemy.gridPos.col;
 
-    // Target tile center the enemy is moving toward
     const targetRow = curRow + enemy.direction.dr;
     const targetCol = curCol + enemy.direction.dc;
-    const target = gridCenter(targetRow, targetCol);
+    const target = gridCenter(targetRow, targetCol, state.levelConfig.tileSize);
 
-    // Check if the target tile is walkable; if not, pick a new direction now
-    if (!isWalkable(state.grid, targetRow, targetCol, state.bombs)) {
+    if (!isWalkable(state.grid, targetRow, targetCol, state.levelConfig.gridWidth, state.levelConfig.gridHeight, state.bombs)) {
       const newDir = pickDirection(state, curRow, curCol, enemy.direction);
       return { ...enemy, direction: newDir };
     }
 
-    // Move toward the target center
     const step = enemy.speed * dt;
     let newX = enemy.position.x + enemy.direction.dc * step;
     let newY = enemy.position.y + enemy.direction.dr * step;
 
-    // Check if we've reached or overshot the target center
     const reachedX =
       enemy.direction.dc === 0 ||
       (enemy.direction.dc > 0 ? newX >= target.x : newX <= target.x);
@@ -472,12 +574,10 @@ function moveEnemies(state: GameState, dt: number): GameState {
       (enemy.direction.dr > 0 ? newY >= target.y : newY <= target.y);
 
     if (reachedX && reachedY) {
-      // Snap to the target tile center
       newX = target.x;
       newY = target.y;
       const newGridPos = { row: targetRow, col: targetCol };
 
-      // Pick next direction from the new tile
       const newDir = pickDirection(state, targetRow, targetCol, enemy.direction);
       return {
         ...enemy,
@@ -487,7 +587,6 @@ function moveEnemies(state: GameState, dt: number): GameState {
       };
     }
 
-    // Still in transit — keep moving, gridPos stays at current tile
     return {
       ...enemy,
       position: { x: newX, y: newY },
@@ -497,9 +596,6 @@ function moveEnemies(state: GameState, dt: number): GameState {
   return { ...state, enemies };
 }
 
-/** Pick the next direction for an enemy at (row, col).
- *  Prefers to continue straight if possible (classic Bomberman AI),
- *  otherwise picks a random walkable direction. */
 function pickDirection(
   state: GameState,
   row: number,
@@ -514,16 +610,29 @@ function pickDirection(
   ];
 
   const walkable = dirs.filter((d) =>
-    isWalkable(state.grid, row + d.dr, col + d.dc, state.bombs),
+    isWalkable(state.grid, row + d.dr, col + d.dc, state.levelConfig.gridWidth, state.levelConfig.gridHeight, state.bombs),
   );
 
-  if (walkable.length === 0) return current; // stuck — keep facing same way
+  if (walkable.length === 0) return current;
 
-  // Prefer continuing straight
+  // Smart AI: use pathfinding toward player based on smartness probability
+  if (Math.random() < state.levelConfig.enemySmartness) {
+    const playerPos = state.player.gridPos;
+    const distances = walkable.map((d) => {
+      const newRow = row + d.dr;
+      const newCol = col + d.dc;
+      const dist = Math.abs(newRow - playerPos.row) + Math.abs(newCol - playerPos.col);
+      return { dir: d, dist };
+    });
+    
+    distances.sort((a, b) => a.dist - b.dist);
+    return distances[0].dir;
+  }
+
+  // Classic behavior: prefer continuing straight
   const straight = walkable.find((d) => d.dr === current.dr && d.dc === current.dc);
-  if (straight) {
-    // 75% chance to keep going straight (classic Bomberman feel)
-    if (Math.random() < 0.75) return straight;
+  if (straight && Math.random() < 0.75) {
+    return straight;
   }
 
   return walkable[Math.floor(Math.random() * walkable.length)];
@@ -533,7 +642,6 @@ function checkEnemyCollision(state: GameState): GameState {
   const player = state.player;
   if (!player.alive) return state;
 
-  // Check if player collides with any enemy
   const collision = state.enemies.some(
     (e) =>
       e.alive &&
@@ -542,15 +650,50 @@ function checkEnemyCollision(state: GameState): GameState {
   );
 
   if (collision) {
-    return {
-      ...state,
-      player: { ...player, alive: false },
-      status: GameStatus.Lost,
-    };
+    const newLives = state.lives - 1;
+    let soundEvents = [...state.soundEvents, SoundEvent.PlayerDeath];
+    let particleEvents = [...state.particleEvents, {
+      type: ParticleEventType.PlayerDeath,
+      x: player.position.x,
+      y: player.position.y,
+    }];
+
+    if (newLives <= 0) {
+      soundEvents.push(SoundEvent.GameOver);
+      return {
+        ...state,
+        player: { ...player, alive: false },
+        status: GameStatus.Lost,
+        lives: 0,
+        soundEvents,
+        particleEvents,
+      };
+    } else {
+      const spawn = gridCenter(1, 1, state.levelConfig.tileSize);
+      return {
+        ...state,
+        player: {
+          ...player,
+          position: { x: spawn.x, y: spawn.y },
+          gridPos: { row: 1, col: 1 },
+          alive: true,
+          passThroughBomb: null,
+        },
+        lives: newLives,
+        bombs: [],
+        explosions: [],
+        soundEvents,
+        particleEvents,
+      };
+    }
   }
 
-  // Kill enemies hit by explosions
-  const enemies = state.enemies.map((enemy) => {
+  let enemies = state.enemies;
+  let score = state.score;
+  let soundEvents = [...state.soundEvents];
+  let particleEvents = [...state.particleEvents];
+
+  enemies = enemies.map((enemy) => {
     if (!enemy.alive) return enemy;
 
     const hit = state.explosions.some(
@@ -558,13 +701,20 @@ function checkEnemyCollision(state: GameState): GameState {
     );
 
     if (hit) {
+      score += SCORE_ENEMY_KILL;
+      soundEvents.push(SoundEvent.EnemyDeath);
+      particleEvents.push({
+        type: ParticleEventType.EnemyDeath,
+        x: enemy.position.x,
+        y: enemy.position.y,
+      });
       return { ...enemy, alive: false };
     }
 
     return enemy;
   });
 
-  return { ...state, enemies };
+  return { ...state, enemies, score, soundEvents, particleEvents };
 }
 
 // ── Win Condition ─────────────────────────────────────────────
@@ -573,10 +723,40 @@ function checkWinCondition(state: GameState): GameState {
   const allEnemiesDead = state.enemies.every((e) => !e.alive);
 
   if (allEnemiesDead && state.status === GameStatus.Running) {
-    return { ...state, status: GameStatus.Won };
+    const score = state.score + SCORE_LEVEL_CLEAR;
+    let soundEvents = [...state.soundEvents, SoundEvent.LevelComplete];
+    let particleEvents = [...state.particleEvents];
+
+    const center = gridCenter(
+      Math.floor(state.levelConfig.gridHeight / 2),
+      Math.floor(state.levelConfig.gridWidth / 2),
+      state.levelConfig.tileSize
+    );
+    particleEvents.push({
+      type: ParticleEventType.LevelComplete,
+      x: center.x,
+      y: center.y,
+    });
+
+    // Check if this is the final level
+    if (state.level >= 5) {
+      soundEvents.push(SoundEvent.Victory);
+    }
+
+    return { ...state, status: GameStatus.Won, score, soundEvents, particleEvents };
   }
 
   return state;
+}
+
+// ── Level Transition ──────────────────────────────────────────
+
+export function transitionToNextLevel(state: GameState): GameState | null {
+  if (state.status !== GameStatus.Won) return null;
+  if (state.level >= 5) return null; // No next level after level 5
+
+  const nextLevelConfig = LEVEL_CONFIGS[state.level]; // level is 1-indexed, array is 0-indexed
+  return createInitialState(nextLevelConfig, state.lives, state.score);
 }
 
 // ── Helpers ───────────────────────────────────────────────────

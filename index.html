@@ -3,72 +3,68 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>💣 Cartoon Bomberman 💣</title>
+  <title>💣 Bomberman Revolution 💣</title>
   <style>
-    * { 
-      margin: 0; 
-      padding: 0; 
-      box-sizing: border-box; 
-    }
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     
     body {
-      background: linear-gradient(135deg, #1a1a2e 0%, #2d3561 100%);
+      background: #0a0a0f;
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
-      font-family: 'Comic Sans MS', 'Arial', sans-serif;
+      font-family: 'Press Start 2P', monospace;
+      overflow: hidden;
     }
     
-    h1 {
-      color: #ffd93d;
-      font-size: 48px;
-      text-shadow: 4px 4px 0px #2a2a2a, 
-                   -2px -2px 0px #ff6b35;
-      margin-bottom: 20px;
-      letter-spacing: 3px;
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: radial-gradient(ellipse at 50% 50%, rgba(30, 0, 60, 0.4) 0%, transparent 70%),
+                  radial-gradient(ellipse at 80% 20%, rgba(60, 0, 30, 0.3) 0%, transparent 50%),
+                  radial-gradient(ellipse at 20% 80%, rgba(0, 30, 60, 0.3) 0%, transparent 50%);
+      animation: bgPulse 8s ease-in-out infinite alternate;
+      z-index: -1;
+    }
+    
+    @keyframes bgPulse {
+      0% { opacity: 0.6; }
+      100% { opacity: 1; }
     }
     
     canvas {
-      border: 6px solid #2a2a2a;
-      border-radius: 8px;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5),
-                  0 0 20px rgba(255, 217, 61, 0.3);
-      image-rendering: pixelated;
-      image-rendering: -moz-crisp-edges;
-      image-rendering: crisp-edges;
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      box-shadow: 0 0 40px rgba(100, 50, 200, 0.3),
+                  0 0 80px rgba(100, 50, 200, 0.1),
+                  inset 0 0 20px rgba(0, 0, 0, 0.5);
     }
     
-    .info {
-      margin-top: 20px;
-      color: #fff;
+    .controls {
+      margin-top: 16px;
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 10px;
       text-align: center;
-      font-size: 14px;
-      opacity: 0.8;
+      letter-spacing: 1px;
     }
     
-    .info kbd {
-      background: #2a2a2a;
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 2px solid #444;
-      font-family: monospace;
+    .controls kbd {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
       margin: 0 2px;
     }
   </style>
 </head>
 <body>
-  <h1>💣 BOMBERMAN 💣</h1>
-  <canvas id="game" width="780" height="660"></canvas>
-  <div class="info">
-    <p>
-      Move: <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> 
-      &nbsp;|&nbsp; 
-      Bomb: <kbd>SPACE</kbd>
-      &nbsp;|&nbsp;
-      Restart: <kbd>R</kbd>
-    </p>
+  <canvas id="game" width="900" height="600"></canvas>
+  <div class="controls">
+    <kbd>↑↓←→</kbd> Move &nbsp;|&nbsp; <kbd>SPACE</kbd> Bomb &nbsp;|&nbsp; <kbd>ENTER</kbd> Select &nbsp;|&nbsp; <kbd>ESC</kbd> Back &nbsp;|&nbsp; <kbd>R</kbd> Restart
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
