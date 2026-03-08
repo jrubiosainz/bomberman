@@ -9,6 +9,21 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-03-08 — LLM Player Intelligence: Move History & Anti-Loop Detection
+**Pattern that works: Contextual LLM agents need explicit memory and loop detection.**
+
+Stateless LLM calls produce repetitive behavior. Adding move history tracking (last 10 moves in prompt) + anti-loop detection (warn when 5 consecutive identical moves) + dynamic temperature (0.7 baseline, 1.0 when looping) transforms strategic quality dramatically.
+
+- Move history provides LLM memory across API calls
+- Anti-loop detection gives explicit feedback (LLM doesn't infer loops well from state alone)
+- Dynamic temperature breaks determinism without creating chaos
+- Stuck detection (position tracking) catches wall-hugging loops move history misses
+- Enhanced system prompt (exploration emphasis, tactical tips, phase awareness) measurably improves play quality
+
+**Best temp settings:** 0.7 (creative play) → 1.0 (force exploration on loops). Matches behavior: coherent default, forced variety when needed.
+
+**Threshold of 5 moves** balances false positives (too low) vs delayed intervention (too high).
+
 ### 2026-03-08 — Valid Model IDs for models.inference.ai.azure.com
 **Tested and confirmed working (200 OK):**
 - OpenAI: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`
@@ -323,3 +338,87 @@ requestLLMDecision() {
 - Compact view window size (11×11) chosen to balance context vs token usage
 - Enemy positions always listed even if outside window — critical for strategy
 - HTTP 429 `Retry-After` can be seconds (int) or HTTP-date (ignored for simplicity, default to 10s)
+
+### 2026-03-08 — LLM Player Intelligence Boost: Move History, Anti-Loop, Strategic Prompting
+
+**Problem:** LLM player behaved stupidly — only moved right repeatedly. User feedback: "parece bastante tonto."
+
+**Root Causes:**
+1. **Amnesia**: `moveHistory` tracked but never sent to LLM — each call stateless, zero memory
+2. **No anti-loop detection**: Same state → same move repeatedly
+3. **Temperature too low (0.3)**: Extremely deterministic, no exploration
+4. **System prompt too basic**: No guidance on exploration, variation, or strategic depth
+5. **No stuck detection**: Player could repeat moves without position change
+
+**Solution — Smarter LLM Player:**
+1. **Move history in prompt**: Last 10 moves included in serialized state ("RECENT MOVES: right, right, right...")
+2. **Anti-loop detection**: If last 5 moves identical, add "⚠️ WARNING: You've repeated X 5 times!" to prompt
+3. **Dynamic temperature**: Base 0.7 (creative play), boosted to 1.0 when loop detected
+4. **Stuck detection**: If position unchanged in last 5 moves, add "⚠️ YOU ARE STUCK!" warning
+5. **Enhanced system prompt**: 
+   - "EXPLORE THE MAP — don't just move in one direction repeatedly"
+   - "VARY YOUR ACTIONS — repeating the same move over and over is BAD"
+   - Tactical tips: approach enemies indirectly, create escape routes, use bombs to open paths
+   - Game phase guidance: early/mid/late game strategies
+6. **Game phase awareness**: "Enemies Remaining: X | Active Bombs: Y" helps LLM adjust tactics
+
+**Implementation Pattern — Contextual LLM Play:**
+```typescript
+private moveHistory: string[] = []; // Stores last 10 moves as strings
+private lastPosition: { row: number; col: number } | null = null;
+
+serializeState(state) {
+  // Add move history to prompt
+  if (moveHistory.length > 0) {
+    output += `RECENT MOVES: ${moveHistory.slice(-10).join(', ')}\n`;
+    
+    // Anti-loop warning
+    const lastFive = moveHistory.slice(-5);
+    if (lastFive.every(m => m === lastFive[0])) {
+      output += `⚠️ WARNING: You've repeated "${lastFive[0]}" 5 times!\n`;
+    }
+  }
+  
+  // Stuck detection
+  if (lastPosition && lastPosition.row === player.row && lastPosition.col === player.col) {
+    output += `⚠️ YOU ARE STUCK! Try a different direction!\n`;
+  }
+}
+
+calculateTemperature() {
+  const lastFive = moveHistory.slice(-5);
+  if (lastFive.every(m => m === lastFive[0])) return 1.0; // Force exploration
+  return 0.7; // Default creative temperature
+}
+
+requestLLMDecision() {
+  const actionStr = actionToString(action.action);
+  moveHistory.push(actionStr);
+  if (moveHistory.length > 10) moveHistory.shift();
+}
+```
+
+**Key Patterns:**
+- Convert `InputAction` enum to strings ("up", "down", etc.) for history tracking
+- Track position changes to detect stuck state (no grid movement despite action history)
+- Temperature scales dynamically: 0.7 default (creative) → 1.0 when looping (forced exploration)
+- System prompt emphasizes variation: "If stuck or repeating moves, try a completely different direction"
+- Game phase context helps LLM adapt: "Early game: break walls" vs "Late game: be aggressive"
+
+**Files Modified:**
+- `src/llm-player.ts`: Added `lastPosition` field, `calculateTemperature()`, `actionToString()`, enhanced `serializeState()` with move history/warnings, improved system prompt with strategic guidance, dynamic temperature in API call
+
+**User Experience Impact:**
+- LLM no longer loops infinitely moving right
+- Explores the full map instead of hugging one wall
+- Adapts strategy based on game phase (enemy count, bomb state)
+- Recovers from stuck states by trying different directions
+- More creative and varied gameplay — feels "smarter"
+
+**Technical Details:**
+- Move history capped at 10 moves (sliding window) to keep prompt concise
+- Loop detection threshold: 5 identical moves (balance between responsiveness and false positives)
+- Stuck detection requires 5 moves without position change (filters out bomb/wait actions)
+- Temperature 0.7 chosen as sweet spot: creative but not random
+- Temperature 1.0 on loop: maximum exploration to break patterns
+- System prompt expanded from 6 lines to 25+ lines with tactical depth

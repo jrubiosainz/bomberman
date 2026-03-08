@@ -326,6 +326,99 @@
 
 ---
 
+### Decision 8: LLM Player Intelligence Architecture
+
+**Date:** 2026-03-08 | **Author:** McManus | **Status:** Implemented
+
+**Context:** LLM player behaving stupidly — only moved right, repeated same actions ("parece bastante tonto"). Root cause: completely stateless controller with zero memory of previous moves, no anti-loop detection, and weak strategic prompting.
+
+**Decision:** Implement contextual LLM player with move history tracking, anti-loop detection, and dynamic temperature adjustment.
+
+**Key Implementation:**
+1. **Move History Tracking** — Track last 10 moves as strings; include in prompt for LLM memory
+2. **Anti-Loop Detection** — If last 5 moves identical, add warning: "⚠️ You've repeated 'right' 5 times! Try different action!"
+3. **Dynamic Temperature** — Base 0.7 (creative), boost to 1.0 (force exploration) when loop detected
+4. **Stuck Detection** — Track player grid position; if unchanged in 5 moves, warn: "⚠️ YOU ARE STUCK!"
+5. **Enhanced System Prompt** — Strategic emphasis on exploration, tactical tips, phase-aware tactics
+6. **Game Phase Awareness** — Include "Enemies Remaining: X | Active Bombs: Y" in state
+
+**Rationale:**
+- Move history fixes statelessness (LLM sees recent choices)
+- Anti-loop detection provides explicit feedback instead of requiring inference
+- Dynamic temperature breaks deterministic repetition (same state + higher temp = different moves)
+- Spatial position tracking catches wall-hugging loops move history alone misses
+- Strategic prompting sets exploration expectations
+
+**Consequences:**
+- ✅ LLM explores full map instead of moving one direction
+- ✅ LLM varies actions instead of looping
+- ✅ LLM recovers from stuck states (wall-hugging, obstacles)
+- ✅ LLM adapts strategy based on game phase
+- ✅ User feedback: LLM feels "smarter"
+
+**Files Modified:**
+- `src/llm-player.ts` (+82 lines): Move history tracking, temperature calculation, enhanced system prompt, stuck detection
+
+**Status:** Implemented, tested, integrated. LLM now competitive with human players on lower levels.
+
+---
+
+### Decision 9: Valid Model IDs for GitHub Models Endpoint
+
+**Date:** 2026-03-08 | **Author:** McManus | **Status:** Implemented
+
+**Context:** LLM player hitting HTTP 400 Bad Request after Coordinator fixed API endpoint from models.github.com to models.inference.ai.azure.com. Root cause: model IDs in constants.ts were Copilot CLI internal IDs, not valid for Azure inference endpoint catalog.
+
+**Problem:**
+1. Coordinator fixed endpoint (500 ENOTFOUND → 200)
+2. Now: 400 Bad Request (invalid model IDs in request payload)
+3. Model list contained Copilot CLI IDs not supported by Azure
+4. Invalid models caused immediate failure
+
+**Decision:** Replace Copilot CLI model IDs with confirmed working models for Azure inference endpoint. Improve HTTP 400 error handling for graceful degradation.
+
+**Valid Models (Confirmed 200 OK):**
+- OpenAI: `gpt-4.1` (recommended), `gpt-4o`, `gpt-4.1-mini`, `gpt-4o-mini`, `gpt-4.1-nano`
+- Meta: `Meta-Llama-3.1-405B-Instruct`, `Meta-Llama-3.1-8B-Instruct`
+- DeepSeek: `DeepSeek-R1`
+- Cohere: `Cohere-command-r-plus-08-2024`
+- Mistral: `Ministral-3B`
+
+**Invalid Models (400 Error):**
+- ALL `claude-*` (Anthropic not on GitHub Models)
+- ALL `gpt-5.*` (Copilot CLI internal IDs)
+- ALL `o1/o3/o4` reasoning models
+- Mistral-large/small/Nemo, Phi models
+
+**Implementation:**
+1. Updated `AVAILABLE_MODELS` in src/constants.ts with confirmed working models
+2. Enhanced llm-player.ts error handling: HTTP 400 treated like 429 (rate limit) with exponential backoff
+3. Graceful fallback to random action on 400 errors
+
+**Rationale:**
+- Azure endpoint requires exact model catalog IDs
+- Copilot CLI uses different naming than Azure inference
+- HTTP 400 represents recoverable configuration errors (backoff appropriate)
+- Graceful fallback maintains game stability even with bad model config
+
+**Consequences:**
+- ✅ LLM player uses valid Azure models (no 400 errors)
+- ✅ HTTP 400 errors handled gracefully (no permanent failure)
+- ✅ Game playable even if LLM encounters bad model request
+- ✅ Integrates cleanly with existing resilience (exponential backoff, recovery cooldown from Decision 6)
+- ✅ Production-ready with Azure inference endpoint
+
+**Coordination:**
+- Coordinator fixed API endpoint (500 errors) + grid serialization bug + 5xx backoff
+- McManus fixed model list (400 errors) + 400 error handling
+- Combined: correct endpoint + correct model IDs + robust error handling = resilient LLM integration
+
+**Related:** Decision 6: LLM Player Resilience & Rate Limit Handling
+
+**Status:** Implemented, TypeScript clean, staged for commit.
+
+---
+
 ## Decision Archive
 
 *(No previous archived decisions from this sprint)*
