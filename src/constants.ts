@@ -104,23 +104,21 @@ export const LEVEL_CONFIGS: LevelConfig[] = [
 // ── LLM Models ────────────────────────────────────────────────
 
 export const LLM_MODELS = [
-  { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', provider: 'Anthropic' },
-  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Anthropic' },
-  { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic' },
-  { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', provider: 'Anthropic' },
-  { id: 'claude-opus-4.5', name: 'Claude Opus 4.5', provider: 'Anthropic' },
-  { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'Anthropic' },
-  { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', provider: 'Google' },
-  { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'OpenAI' },
-  { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'OpenAI' },
-  { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex', provider: 'OpenAI' },
-  { id: 'gpt-5.2', name: 'GPT-5.2', provider: 'OpenAI' },
-  { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max', provider: 'OpenAI' },
-  { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex', provider: 'OpenAI' },
-  { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'OpenAI' },
-  { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini', provider: 'OpenAI' },
-  { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'OpenAI' },
-  { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'OpenAI' },
+  // OpenAI — best for Bomberman (fast + smart)
+  { id: 'gpt-4.1', name: 'GPT-4.1 (Recommended)', provider: 'OpenAI' },
+  { id: 'gpt-4o', name: 'GPT-4o', provider: 'OpenAI' },
+  { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', provider: 'OpenAI' },
+  { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'OpenAI' },
+  { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano (Fastest)', provider: 'OpenAI' },
+  // Meta Llama
+  { id: 'Meta-Llama-3.1-405B-Instruct', name: 'Llama 3.1 405B', provider: 'Meta' },
+  { id: 'Meta-Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B (Fast)', provider: 'Meta' },
+  // DeepSeek
+  { id: 'DeepSeek-R1', name: 'DeepSeek R1', provider: 'DeepSeek' },
+  // Cohere
+  { id: 'Cohere-command-r-plus-08-2024', name: 'Command R+', provider: 'Cohere' },
+  // Mistral
+  { id: 'Ministral-3B', name: 'Ministral 3B (Tiny)', provider: 'Mistral' },
 ];
 
 export const LLM_API_ENDPOINT = '/api/chat/completions';

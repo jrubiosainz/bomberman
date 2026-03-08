@@ -259,18 +259,28 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
     });
 
     if (!response.ok) {
+      // Try to read the response body for a detailed error message
+      let detail = '';
+      try {
+        const body = await response.json();
+        detail = body?.error?.message || body?.error || body?.message || JSON.stringify(body);
+      } catch {
+        try { detail = await response.text(); } catch { /* ignore */ }
+      }
+      const detailSuffix = detail ? ` — ${detail}` : '';
+
       // Check for rate limit (HTTP 429)
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const waitTime = retryAfter ? parseInt(retryAfter, 10) : 10;
         this.retryAfter = waitTime;
-        throw new Error(`Rate limited (HTTP 429). Retrying after ${waitTime}s...`);
+        throw new Error(`Rate limited (HTTP 429). Retrying after ${waitTime}s...${detailSuffix}`);
       }
       // Treat 500/502/503/504 as transient — backoff and retry
       if (response.status >= 500) {
-        throw new Error(`Server error (${response.status}). Will retry with backoff...`);
+        throw new Error(`Server error (${response.status}). Will retry with backoff...${detailSuffix}`);
       }
-      throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
+      throw new Error(`LLM API error: ${response.status} ${response.statusText}${detailSuffix}`);
     }
 
     const data = await response.json();
