@@ -185,6 +185,10 @@ async function handleLLMPlayingMode(dt: number): Promise<void> {
     thinking: llmPlayer.thinking,
     reasoning: llmPlayer.reasoning,
     model: llmConfig?.modelDisplayName || 'AI',
+    reflecting: llmPlayer.reflecting,
+    reflectionMessage: llmPlayer.reflectionMessage,
+    lessonCount: llmPlayer.lessonCount,
+    customAgentEnabled: llmPlayer.customAgentEnabled,
   };
   renderer.render(gameState, llmInfo, dt);
   particles.render(renderer['ctx']);
@@ -201,6 +205,13 @@ async function handleLLMPlayingMode(dt: number): Promise<void> {
     }
   } else if (gameState.status === GameStatus.Lost) {
     currentLives--;
+
+    // Determine cause of death and trigger reflection for custom agent
+    if (llmPlayer && llmPlayer.customAgentEnabled) {
+      const cause = determineCauseOfDeath(gameState);
+      llmPlayer.onDeath(gameState, cause);
+    }
+
     if (currentLives > 0) {
       startLevel(currentLevelIndex);
     } else {
@@ -214,6 +225,15 @@ async function handleLLMPlayingMode(dt: number): Promise<void> {
       llmPlayer = null;
     }
   };
+}
+
+/** Heuristic: if an explosion overlaps the player position, it was an explosion death; otherwise enemy collision. */
+function determineCauseOfDeath(state: GameState): string {
+  const { player, explosions } = state;
+  const hitByExplosion = explosions.some(
+    (e) => e.position.row === player.gridPos.row && e.position.col === player.gridPos.col,
+  );
+  return hitByExplosion ? 'explosion' : 'enemy_collision';
 }
 
 function handleLevelTransition(dt: number): void {

@@ -9,6 +9,7 @@ export class MenuSystem {
   private selectedModelIndex: number = 0;
   private soundEnabled: boolean = true;
   private authStatus: 'checking' | 'authenticated' | 'failed' = 'checking';
+  private customAgentEnabled: boolean = false;
 
   constructor() {
     this.mode = 'main_menu' as GameMode;
@@ -42,6 +43,7 @@ export class MenuSystem {
       model: model.id,
       modelDisplayName: model.name,
       endpoint: LLM_API_ENDPOINT,
+      customAgentEnabled: this.customAgentEnabled,
     };
   }
 
@@ -90,11 +92,11 @@ export class MenuSystem {
   }
 
   private handleLLMSetup(action: InputAction | 'enter' | 'escape' | 'backspace' | string): void {
-    // 3 focusable items: Model (0), Level (1), Start (2)
+    // 4 focusable items: Model (0), Level (1), Custom Agent (2), Start (3)
     if (action === 'up') {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
     } else if (action === 'down') {
-      this.selectedIndex = Math.min(2, this.selectedIndex + 1);
+      this.selectedIndex = Math.min(3, this.selectedIndex + 1);
     } else if (action === 'left' && this.selectedIndex === 0) {
       this.selectedModelIndex = Math.max(0, this.selectedModelIndex - 1);
     } else if (action === 'right' && this.selectedIndex === 0) {
@@ -103,10 +105,12 @@ export class MenuSystem {
       this.selectedLevel = Math.max(0, this.selectedLevel - 1);
     } else if (action === 'right' && this.selectedIndex === 1) {
       this.selectedLevel = Math.min(LEVEL_CONFIGS.length - 1, this.selectedLevel + 1);
+    } else if ((action === 'enter' || action === 'left' || action === 'right') && this.selectedIndex === 2) {
+      this.customAgentEnabled = !this.customAgentEnabled;
     } else if (action === 'enter') {
-      if (this.selectedIndex === 2) {
+      if (this.selectedIndex === 3) {
         if (this.authStatus === 'failed') {
-          this.checkAuth(); // retry auth check
+          this.checkAuth();
         } else if (this.authStatus === 'authenticated') {
           this.transitionTo('llm_playing' as GameMode);
         }
@@ -119,6 +123,16 @@ export class MenuSystem {
   transitionTo(mode: GameMode): void {
     this.mode = mode;
     this.selectedIndex = 0;
+  }
+
+  private getLessonCount(): number {
+    const model = LLM_MODELS[this.selectedModelIndex];
+    const key = `bomberman_llm_lessons_${model.id}`;
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) return JSON.parse(stored).length;
+    } catch {}
+    return 0;
   }
 
   render(ctx: CanvasRenderingContext2D, canvasWidth: number, canvasHeight: number, time: number): void {
@@ -269,8 +283,8 @@ export class MenuSystem {
     ctx.font = 'bold 48px Arial';
     ctx.fillText('\u{1F916} LLM PLAYS BOMBERMAN', width / 2, 80);
 
-    const startY = 170;
-    const spacing = 70;
+    const startY = 160;
+    const spacing = 62;
     const labelX = width / 2 - 200;
     const valueX = width / 2 + 50;
 
@@ -289,7 +303,7 @@ export class MenuSystem {
       ctx.fillText("\u274C Run 'gh auth login' to connect", width / 2, authY);
     }
 
-    // Model selector
+    // Model selector (index 0)
     const modelY = startY + spacing;
     ctx.textAlign = 'left';
     ctx.fillStyle = this.selectedIndex === 0 ? '#ffd700' : '#fff';
@@ -304,7 +318,7 @@ export class MenuSystem {
     ctx.font = '14px Arial';
     ctx.fillText(`Provider: ${model.provider}`, valueX, modelY + 25);
 
-    // Level selector
+    // Level selector (index 1)
     const levelY = startY + spacing * 2;
     ctx.textAlign = 'left';
     ctx.fillStyle = this.selectedIndex === 1 ? '#ffd700' : '#fff';
@@ -315,18 +329,83 @@ export class MenuSystem {
     ctx.fillStyle = this.selectedIndex === 1 ? '#0ff' : '#aaa';
     ctx.fillText(`< Level ${level.level}: ${level.name} >`, valueX, levelY);
 
-    // Start button
-    const btnY = startY + spacing * 3 + 10;
+    // Custom Agent toggle (index 2)
+    const toggleY = startY + spacing * 3;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = this.selectedIndex === 2 ? '#ffd700' : '#fff';
+    ctx.font = 'bold 20px Arial';
+    ctx.fillText('\u{1F9E0} Custom Agent:', labelX, toggleY);
+
+    // Toggle switch
+    const toggleX = valueX;
+    const toggleW = 60;
+    const toggleH = 26;
+    const toggleR = 13;
+    const togY = toggleY - toggleH / 2;
+
+    // Track background
+    ctx.beginPath();
+    ctx.moveTo(toggleX + toggleR, togY);
+    ctx.lineTo(toggleX + toggleW - toggleR, togY);
+    ctx.arc(toggleX + toggleW - toggleR, togY + toggleR, toggleR, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(toggleX + toggleR, togY + toggleH);
+    ctx.arc(toggleX + toggleR, togY + toggleR, toggleR, Math.PI / 2, -Math.PI / 2);
+    ctx.closePath();
+
+    if (this.customAgentEnabled) {
+      const pulse = Math.sin(_time * 3) * 0.15 + 0.85;
+      ctx.fillStyle = `rgba(0, 255, 180, ${pulse})`;
+    } else {
+      ctx.fillStyle = '#444';
+    }
+    ctx.fill();
+
+    // Toggle knob
+    const knobX = this.customAgentEnabled
+      ? toggleX + toggleW - toggleR - 2
+      : toggleX + toggleR + 2;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(knobX, togY + toggleR, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ON/OFF label next to toggle
+    ctx.font = 'bold 16px monospace';
+    if (this.customAgentEnabled) {
+      ctx.fillStyle = '#0f0';
+      ctx.fillText('[ON]', toggleX + toggleW + 12, toggleY);
+    } else {
+      ctx.fillStyle = '#666';
+      ctx.fillText('[OFF]', toggleX + toggleW + 12, toggleY);
+    }
+
+    // Description text
+    ctx.font = '13px Arial';
+    ctx.fillStyle = '#666';
+    ctx.fillText('AI learns from each death', labelX, toggleY + 22);
+
+    // Lesson count when enabled
+    if (this.customAgentEnabled) {
+      const lessons = this.getLessonCount();
+      if (lessons > 0) {
+        ctx.fillStyle = '#0ff';
+        ctx.font = '12px monospace';
+        ctx.fillText(`(${lessons} lesson${lessons !== 1 ? 's' : ''} stored)`, labelX + 195, toggleY + 22);
+      }
+    }
+
+    // Start button (index 3)
+    const btnY = startY + spacing * 4 + 10;
     ctx.textAlign = 'center';
     const canStart = this.authStatus === 'authenticated';
-    if (this.selectedIndex === 2) {
+    if (this.selectedIndex === 3) {
       ctx.fillStyle = canStart ? '#0f0' : '#f44';
     } else {
       ctx.fillStyle = canStart ? '#aaa' : '#555';
     }
     ctx.font = 'bold 24px Arial';
     if (canStart) {
-      const pulse = this.selectedIndex === 2 ? Math.sin(_time * 5) * 0.15 + 1 : 1;
+      const pulse = this.selectedIndex === 3 ? Math.sin(_time * 5) * 0.15 + 1 : 1;
       ctx.save();
       ctx.translate(width / 2, btnY);
       ctx.scale(pulse, pulse);

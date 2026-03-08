@@ -175,6 +175,7 @@ export interface LLMConfig {
   model: string;
   modelDisplayName: string;
   endpoint: string;
+  customAgentEnabled?: boolean;
 }
 
 export interface LLMAction {

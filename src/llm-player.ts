@@ -1,10 +1,20 @@
 import { GameState, LLMConfig, LLMAction, InputAction, TileType, PowerupType } from './types';
 import { LLM_TICK_INTERVAL } from './constants';
 
+const MAX_LESSONS = 20;
+
+interface ReflectionResponse {
+  lessons: string[];
+  analysis: string;
+}
+
 /**
  * LLM-powered player controller.
  * Makes decisions by sending the game state to an LLM and parsing its response.
  * Auth is handled server-side by the Vite proxy — no API key needed.
+ *
+ * When customAgentEnabled, deaths trigger an LLM reflection that persists
+ * lessons to localStorage so the AI improves across games.
  */
 export class LLMPlayer {
   private config: LLMConfig;
@@ -15,11 +25,163 @@ export class LLMPlayer {
   private moveHistory: string[] = [];
   private errorCount: number = 0;
   private currentInterval: number = LLM_TICK_INTERVAL;
-  private retryAfter: number = 0; // Cooldown timer for rate limit recovery
+  private retryAfter: number = 0;
   private lastPosition: { row: number; col: number } | null = null;
+
+  // Custom Agent / Death Reflection state
+  private _customAgentEnabled: boolean;
+  private _isReflecting: boolean = false;
+  private _reflectionText: string = '';
+  private _lessons: string[] = [];
 
   constructor(config: LLMConfig) {
     this.config = config;
+    this._customAgentEnabled = !!config.customAgentEnabled;
+
+    if (this._customAgentEnabled) {
+      this.loadLessons();
+    }
+  }
+
+  // ── Lesson persistence ───────────────────────────────────────
+
+  private get storageKey(): string {
+    return `bomberman_llm_lessons_${this.config.model}`;
+  }
+
+  private loadLessons(): void {
+    try {
+      const raw = localStorage.getItem(this.storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this._lessons = parsed.slice(-MAX_LESSONS);
+        }
+      }
+    } catch {
+      this._lessons = [];
+    }
+  }
+
+  private persistLessons(): void {
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(this._lessons));
+    } catch { /* storage full — non-critical */ }
+  }
+
+  // ── Death reflection ─────────────────────────────────────────
+
+  async onDeath(state: GameState, cause: string): Promise<void> {
+    if (!this._customAgentEnabled || this._isReflecting) return;
+
+    this._isReflecting = true;
+    this._reflectionText = '💀 Analyzing death...';
+
+    try {
+      const context = this.buildDeathContext(state, cause);
+      const reflection = await this.callReflectionLLM(context);
+
+      const newLessons = reflection.lessons.filter(
+        (l) => !this._lessons.some((existing) => existing.toLowerCase() === l.toLowerCase()),
+      );
+
+      if (newLessons.length > 0) {
+        this._lessons.push(...newLessons);
+        // FIFO: drop oldest when over limit
+        while (this._lessons.length > MAX_LESSONS) {
+          this._lessons.shift();
+        }
+        this.persistLessons();
+      }
+
+      const lessonList = newLessons.length > 0
+        ? newLessons.map((l) => `• ${l}`).join('\n')
+        : '(no new lessons)';
+      this._reflectionText = `💀 ${reflection.analysis}\n\n📝 New lessons:\n${lessonList}`;
+
+      // Hold the reflection on screen for a few seconds
+      await new Promise((r) => setTimeout(r, 4000));
+    } catch (err) {
+      console.error('Reflection LLM error:', err);
+      this._reflectionText = '💀 Reflection failed — continuing...';
+      await new Promise((r) => setTimeout(r, 2000));
+    } finally {
+      this._isReflecting = false;
+      this._reflectionText = '';
+    }
+  }
+
+  private buildDeathContext(state: GameState, cause: string): string {
+    const { player, enemies, bombs } = state;
+    const nearby = (threshold: number) => {
+      const items: string[] = [];
+      enemies.filter((e) => e.alive).forEach((e) => {
+        const dist = Math.abs(e.gridPos.row - player.gridPos.row) + Math.abs(e.gridPos.col - player.gridPos.col);
+        if (dist <= threshold) items.push(`Enemy@(${e.gridPos.row},${e.gridPos.col}) dist=${dist}`);
+      });
+      bombs.forEach((b) => {
+        const dist = Math.abs(b.position.row - player.gridPos.row) + Math.abs(b.position.col - player.gridPos.col);
+        if (dist <= threshold) items.push(`Bomb@(${b.position.row},${b.position.col}) timer=${b.timer.toFixed(1)}s range=${b.range}`);
+      });
+      return items.length > 0 ? items.join('; ') : 'none';
+    };
+
+    return [
+      `Position when killed: (${player.gridPos.row}, ${player.gridPos.col})`,
+      `Cause of death: ${cause}`,
+      `Recent moves before death: ${this.moveHistory.slice(-10).join(', ') || 'none'}`,
+      `Nearby threats at time of death: ${nearby(3)}`,
+    ].join('\n');
+  }
+
+  private async callReflectionLLM(deathContext: string): Promise<ReflectionResponse> {
+    const existingList = this._lessons.length > 0
+      ? this._lessons.map((l, i) => `${i + 1}. ${l}`).join('\n')
+      : '(none yet)';
+
+    const prompt = `You just died in Bomberman. Analyze what went wrong and write 1-3 SHORT, ACTIONABLE lessons.
+
+DEATH CONTEXT:
+${deathContext}
+
+EXISTING LESSONS (don't repeat these):
+${existingList}
+
+Write 1-3 NEW lessons. Each lesson must be:
+- One sentence, max 15 words
+- Specific and actionable (not vague like "be careful")
+- Different from existing lessons
+
+Respond with JSON: {"lessons": ["lesson1", "lesson2"], "analysis": "brief 1-sentence death analysis"}`;
+
+    const response = await fetch(this.config.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: this.config.model,
+        messages: [
+          { role: 'system', content: 'You are a Bomberman strategy analyst. Respond with JSON only.' },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 300,
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Reflection API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    const jsonMatch = content.match(/\{.*\}/s);
+    if (!jsonMatch) throw new Error('No JSON in reflection response');
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      lessons: Array.isArray(parsed.lessons) ? parsed.lessons.map(String) : [],
+      analysis: String(parsed.analysis || 'Death occurred'),
+    };
   }
 
   /** Check whether the Vite proxy can authenticate with GitHub. */
@@ -34,6 +196,11 @@ export class LLMPlayer {
   }
 
   async tick(state: GameState, dt: number): Promise<InputAction[]> {
+    // Freeze during death reflection — stand still
+    if (this._isReflecting) {
+      return [];
+    }
+
     this.tickAccumulator += dt;
 
     // Count down cooldown timer if in recovery mode
@@ -253,7 +420,12 @@ export class LLMPlayer {
   }
 
   private async callLLM(prompt: string): Promise<LLMAction> {
-    const systemPrompt = `You are playing Bomberman. Your goal is to defeat all enemies without dying.
+    let lessonBlock = '';
+    if (this._customAgentEnabled && this._lessons.length > 0) {
+      lessonBlock = `LESSONS FROM PAST DEATHS (CRITICAL — follow these to survive):\n${this._lessons.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`;
+    }
+
+    const systemPrompt = `${lessonBlock}You are playing Bomberman. Your goal is to defeat all enemies without dying.
 
 RULES:
 - You are 'P' on the grid
@@ -403,5 +575,23 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
 
   get currentAction(): InputAction | null {
     return this.pendingAction;
+  }
+
+  // ── Custom Agent public getters ──────────────────────────────
+
+  get customAgentEnabled(): boolean {
+    return this._customAgentEnabled;
+  }
+
+  get reflecting(): boolean {
+    return this._isReflecting;
+  }
+
+  get reflectionMessage(): string {
+    return this._reflectionText;
+  }
+
+  get lessonCount(): number {
+    return this._lessons.length;
   }
 }

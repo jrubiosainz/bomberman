@@ -130,7 +130,15 @@ export class Renderer {
 
   render(
     state: GameState,
-    llmInfo?: { thinking: boolean; reasoning: string; model: string },
+    llmInfo?: {
+      thinking: boolean;
+      reasoning: string;
+      model: string;
+      reflecting?: boolean;
+      reflectionMessage?: string;
+      lessonCount?: number;
+      customAgentEnabled?: boolean;
+    },
     dt: number = 0.016,
   ): void {
     const ctx = this.ctx;
@@ -165,8 +173,9 @@ export class Renderer {
     ctx.restore();
 
     // UI overlays (not affected by shake)
-    this.renderHUD(state, palette, tileSize, gridWidth);
+    this.renderHUD(state, palette, tileSize, gridWidth, llmInfo);
     if (llmInfo) this.renderLLMOverlay(llmInfo, state, palette);
+    if (llmInfo?.reflecting) this.renderReflectionOverlay(llmInfo, state);
     this.renderGameStatus(state, tileSize, gridWidth, gridHeight);
   }
 
@@ -1051,6 +1060,15 @@ export class Renderer {
     palette: ThemePalette,
     ts: number,
     gw: number,
+    llmInfo?: {
+      thinking: boolean;
+      reasoning: string;
+      model: string;
+      reflecting?: boolean;
+      reflectionMessage?: string;
+      lessonCount?: number;
+      customAgentEnabled?: boolean;
+    },
   ): void {
     const ctx = this.ctx;
     const cw = gw * ts;
@@ -1108,12 +1126,48 @@ export class Renderer {
     ctx.fillStyle = FC.hudText;
     const stats = `💣×${state.player.bombCount} 🔥×${state.player.bombRange} ⚡×${Math.floor(state.timer)}`;
     ctx.fillText(stats, cursor, cy);
+    cursor += ctx.measureText(stats).width + 14;
+
+    // Custom Agent badge (right side of HUD)
+    if (llmInfo?.customAgentEnabled) {
+      const badgeText = `🧠 LEARNING${llmInfo.lessonCount ? ` (${llmInfo.lessonCount})` : ''}`;
+      const badgeW = ctx.measureText(badgeText).width + 20;
+      const badgeX = cw - badgeW - 8;
+      const badgeY = 4;
+      const badgeH = barH - 8;
+
+      // Pulsing glow background
+      const pulse = Math.sin(this.anim.time * 2.5) * 0.15 + 0.85;
+      ctx.fillStyle = `rgba(0, 255, 200, ${0.12 * pulse})`;
+      ctx.beginPath();
+      this.roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 4);
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(0, 255, 200, ${0.5 * pulse})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      this.roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 4);
+      ctx.stroke();
+
+      ctx.fillStyle = `rgba(0, 255, 200, ${pulse})`;
+      ctx.font = 'bold 11px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(badgeText, badgeX + 10, cy);
+    }
   }
 
   // ── LLM Overlay (with pulsing border) ─────────────────────
 
   private renderLLMOverlay(
-    llmInfo: { thinking: boolean; reasoning: string; model: string },
+    llmInfo: {
+      thinking: boolean;
+      reasoning: string;
+      model: string;
+      reflecting?: boolean;
+      reflectionMessage?: string;
+      lessonCount?: number;
+      customAgentEnabled?: boolean;
+    },
     state: GameState,
     palette: ThemePalette,
   ): void {
@@ -1162,10 +1216,18 @@ export class Renderer {
       ctx.fillText(dots, px + ctx.measureText(title).width + 16, py + 10);
     }
 
-    // Model name
+    // Model name + lesson count badge when custom agent enabled
     ctx.fillStyle = '#888';
     ctx.font = '10px monospace';
     ctx.fillText(llmInfo.model, px + 10, py + 28);
+
+    if (llmInfo.customAgentEnabled && llmInfo.lessonCount !== undefined) {
+      const lessonBadge = `🧠 ${llmInfo.lessonCount}`;
+      const modelW = ctx.measureText(llmInfo.model).width;
+      ctx.fillStyle = '#0ff';
+      ctx.font = '10px monospace';
+      ctx.fillText(lessonBadge, px + 10 + modelW + 10, py + 28);
+    }
 
     // Divider
     ctx.strokeStyle = '#333';
@@ -1180,6 +1242,149 @@ export class Renderer {
     ctx.font = '11px monospace';
     const reasoning = llmInfo.reasoning || 'Analyzing game state...';
     this.wrapText(ctx, reasoning, px + 10, py + 50, panelW - 20, 14, 5);
+  }
+
+  // ── Reflection Overlay (death analysis) ────────────────────
+
+  private renderReflectionOverlay(
+    llmInfo: {
+      reflecting?: boolean;
+      reflectionMessage?: string;
+      lessonCount?: number;
+    },
+    state: GameState,
+  ): void {
+    const ctx = this.ctx;
+    const cw = state.levelConfig.gridWidth * state.levelConfig.tileSize;
+    const ch = state.levelConfig.gridHeight * state.levelConfig.tileSize;
+    const cx = cw / 2;
+    const cy = ch / 2;
+    const t = this.anim.time;
+
+    // Full-screen dark overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.82)';
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Scan-line effect
+    ctx.save();
+    ctx.globalAlpha = 0.04;
+    for (let y = 0; y < ch; y += 3) {
+      ctx.fillStyle = '#0ff';
+      ctx.fillRect(0, y, cw, 1);
+    }
+    ctx.restore();
+
+    // Center panel
+    const panelW = Math.min(420, cw - 60);
+    const panelH = 280;
+    const px = cx - panelW / 2;
+    const py = cy - panelH / 2;
+
+    // Panel background
+    ctx.fillStyle = 'rgba(5, 8, 20, 0.95)';
+    ctx.beginPath();
+    this.roundRect(ctx, px, py, panelW, panelH, 10);
+    ctx.fill();
+
+    // Neon border with pulsing glow
+    const borderPulse = Math.sin(t * 2.5) * 0.4 + 0.6;
+    ctx.save();
+    ctx.shadowColor = '#0ff';
+    ctx.shadowBlur = 15 * borderPulse;
+    ctx.strokeStyle = `rgba(0, 255, 255, ${borderPulse})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    this.roundRect(ctx, px, py, panelW, panelH, 10);
+    ctx.stroke();
+
+    // Second border layer (purple accent)
+    ctx.shadowColor = '#a855f7';
+    ctx.shadowBlur = 10 * borderPulse;
+    ctx.strokeStyle = `rgba(168, 85, 247, ${borderPulse * 0.4})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    this.roundRect(ctx, px - 3, py - 3, panelW + 6, panelH + 6, 12);
+    ctx.stroke();
+    ctx.restore();
+
+    // Pulsing brain icon
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const brainPulse = Math.sin(t * 3) * 0.2 + 1;
+    const brainGlow = Math.sin(t * 2) * 0.3 + 0.7;
+    ctx.shadowColor = '#0ff';
+    ctx.shadowBlur = 20 * brainGlow;
+    ctx.font = `${Math.floor(36 * brainPulse)}px sans-serif`;
+    ctx.fillText('🧠', cx, py + 40);
+    ctx.restore();
+
+    // Title: "ANALYZING DEATH..." with animated dots
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = '#0ff';
+    ctx.shadowBlur = 12 + Math.sin(t * 3) * 6;
+    ctx.fillStyle = '#0ff';
+    ctx.font = 'bold 20px monospace';
+    const dotCount = Math.floor(t * 2) % 4;
+    const titleDots = '.'.repeat(dotCount);
+    ctx.fillText(`ANALYZING DEATH${titleDots}`, cx, py + 75);
+    ctx.restore();
+
+    // Divider line
+    const divY = py + 95;
+    const gradLine = ctx.createLinearGradient(px + 20, divY, px + panelW - 20, divY);
+    gradLine.addColorStop(0, 'rgba(0,255,255,0)');
+    gradLine.addColorStop(0.5, 'rgba(0,255,255,0.6)');
+    gradLine.addColorStop(1, 'rgba(0,255,255,0)');
+    ctx.strokeStyle = gradLine;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + 20, divY);
+    ctx.lineTo(px + panelW - 20, divY);
+    ctx.stroke();
+
+    // Reflection text area
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = '13px monospace';
+    const message = llmInfo.reflectionMessage || 'Processing...';
+
+    // Typing effect: reveal characters based on time
+    const charsRevealed = Math.min(message.length, Math.floor(t * 40) % (message.length + 60));
+    const displayText = message.substring(0, charsRevealed);
+
+    ctx.fillStyle = '#ddd';
+    this.wrapText(ctx, displayText, px + 20, py + 110, panelW - 40, 18, 7);
+
+    // Blinking cursor at end of text
+    if (Math.floor(t * 3) % 2 === 0) {
+      ctx.fillStyle = '#0ff';
+      ctx.fillText('▌', px + 20 + (ctx.measureText(displayText.split('\n').pop() || '').width % (panelW - 40)), py + 110 + 18 * Math.min(6, Math.floor(displayText.length / 40)));
+    }
+
+    // Bottom section: lesson counter
+    const bottomY = py + panelH - 40;
+
+    // Divider
+    const gradLine2 = ctx.createLinearGradient(px + 20, bottomY - 10, px + panelW - 20, bottomY - 10);
+    gradLine2.addColorStop(0, 'rgba(168,85,247,0)');
+    gradLine2.addColorStop(0.5, 'rgba(168,85,247,0.4)');
+    gradLine2.addColorStop(1, 'rgba(168,85,247,0)');
+    ctx.strokeStyle = gradLine2;
+    ctx.beginPath();
+    ctx.moveTo(px + 20, bottomY - 10);
+    ctx.lineTo(px + panelW - 20, bottomY - 10);
+    ctx.stroke();
+
+    // Lesson counter
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#a855f7';
+    ctx.font = 'bold 14px monospace';
+    const lessonCount = llmInfo.lessonCount ?? 0;
+    ctx.fillText(`📚 Lessons Learned: ${lessonCount}`, cx, bottomY + 8);
   }
 
   private roundRect(
