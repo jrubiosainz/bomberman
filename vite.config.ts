@@ -41,17 +41,16 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/chat/completions': {
-        target: 'https://models.inference.ai.azure.com',
+        target: 'https://api.githubcopilot.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
-            // Strip any auth header the frontend might send (defense in depth)
             proxyReq.removeHeader('authorization');
-            // Inject fresh token from gh CLI on every request
             try {
               const token = getGitHubToken();
               proxyReq.setHeader('Authorization', `Bearer ${token}`);
+              proxyReq.setHeader('Copilot-Integration-Id', 'copilot-developer-cli');
             } catch (err) {
               console.error('[proxy] Failed to get GitHub token:', err);
             }
