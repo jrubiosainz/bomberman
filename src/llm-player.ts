@@ -16,6 +16,7 @@ export class LLMPlayer {
   private errorCount: number = 0;
   private currentInterval: number = LLM_TICK_INTERVAL;
   private retryAfter: number = 0; // Cooldown timer for rate limit recovery
+  private lastPosition: { row: number; col: number } | null = null;
 
   constructor(config: LLMConfig) {
     this.config = config;
@@ -79,9 +80,10 @@ export class LLMPlayer {
       this.errorCount = 0;
       this.currentInterval = LLM_TICK_INTERVAL;
 
-      // Track move history for learning
+      // Track move history for learning and loop detection
       if (action.action) {
-        this.moveHistory.push(action.action);
+        const actionStr = this.actionToString(action.action);
+        this.moveHistory.push(actionStr);
         if (this.moveHistory.length > 10) {
           this.moveHistory.shift();
         }
@@ -118,7 +120,39 @@ export class LLMPlayer {
     // Game info
     output += `Level: ${levelConfig.level} (${levelConfig.name})\n`;
     output += `Lives: ${state.lives} | Score: ${state.score}\n`;
-    output += `Player Stats: ${player.maxBombs} bombs, range ${player.bombRange}, speed ${Math.round(player.speed)}\n\n`;
+    output += `Player Stats: ${player.maxBombs} bombs, range ${player.bombRange}, speed ${Math.round(player.speed)}\n`;
+    
+    // Game phase awareness
+    const aliveEnemyCount = enemies.filter(e => e.alive).length;
+    const activeBombCount = bombs.length;
+    output += `Enemies Remaining: ${aliveEnemyCount} | Active Bombs: ${activeBombCount}\n`;
+    
+    // Move history tracking (last 10 moves)
+    if (this.moveHistory.length > 0) {
+      const recentMoves = this.moveHistory.slice(-10).join(', ');
+      output += `\nRECENT MOVES: ${recentMoves}\n`;
+      
+      // Anti-loop detection
+      const lastFive = this.moveHistory.slice(-5);
+      if (lastFive.length === 5 && lastFive.every(m => m === lastFive[0])) {
+        output += `⚠️ WARNING: You've repeated "${lastFive[0]}" 5 times! Try a different action!\n`;
+      }
+    }
+    
+    // Stuck detection (position hasn't changed)
+    const posHistory = this.moveHistory.slice(-5);
+    if (posHistory.length === 5 && !posHistory.includes('bomb') && !posHistory.includes('wait')) {
+      const lastPos = { row: player.gridPos.row, col: player.gridPos.col };
+      if (this.lastPosition && 
+          this.lastPosition.row === lastPos.row && 
+          this.lastPosition.col === lastPos.col &&
+          posHistory.length >= 5) {
+        output += `⚠️ YOU ARE STUCK! Position hasn't changed. Try a different direction!\n`;
+      }
+    }
+    this.lastPosition = { row: player.gridPos.row, col: player.gridPos.col };
+    
+    output += '\n';
 
     // For large grids (>15 width), send only a window around the player
     const COMPACT_THRESHOLD = 15;
@@ -233,12 +267,25 @@ RULES:
 ACTIONS: up, down, left, right, bomb, wait
 
 STRATEGY:
+- EXPLORE THE MAP — don't just move in one direction repeatedly
+- VARY YOUR ACTIONS — repeating the same move over and over is BAD
 - Place bombs to kill enemies and break walls
 - ALWAYS escape after placing a bomb — explosions kill you too!
 - Collect powerups to get stronger
-- Trap enemies in bomb blasts
+- Trap enemies in bomb blasts by predicting their movement
 - Don't place bombs if you can't escape
 - Watch bomb timers — get to safety before they explode
+- Approach enemies indirectly — corner them with walls and bombs
+- Create escape routes before engaging enemies
+- Use bombs to open paths through destructible walls
+- If stuck or repeating moves, try a completely different direction
+
+TACTICAL TIPS:
+- Early game: Break walls to find powerups and create space
+- Mid game: Use your bomb range advantage to zone enemies
+- Late game: Be aggressive but always have an exit plan
+- When enemies are close: Place bomb and retreat immediately
+- When enemies are far: Explore and collect powerups
 
 Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "reasoning": "brief explanation"}`;
 
@@ -254,7 +301,7 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
           { role: 'user', content: prompt },
         ],
         max_tokens: 200,
-        temperature: 0.3,
+        temperature: this.calculateTemperature(),
       }),
     });
 
@@ -308,6 +355,36 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
       case 'bomb': return InputAction.PlaceBomb;
       case 'wait': return InputAction.Wait;
       default: return InputAction.Wait;
+    }
+  }
+
+  /**
+   * Calculate temperature dynamically based on move history.
+   * Base: 0.7 for creative play
+   * Boost to 1.0 if looping detected (same move 5+ times)
+   */
+  private calculateTemperature(): number {
+    const lastFive = this.moveHistory.slice(-5);
+    if (lastFive.length === 5 && lastFive.every(m => m === lastFive[0])) {
+      // Loop detected — force exploration with high temperature
+      return 1.0;
+    }
+    // Default creative temperature
+    return 0.7;
+  }
+
+  /**
+   * Convert InputAction enum to readable string for history tracking
+   */
+  private actionToString(action: InputAction): string {
+    switch (action) {
+      case InputAction.Up: return 'up';
+      case InputAction.Down: return 'down';
+      case InputAction.Left: return 'left';
+      case InputAction.Right: return 'right';
+      case InputAction.PlaceBomb: return 'bomb';
+      case InputAction.Wait: return 'wait';
+      default: return 'wait';
     }
   }
 
