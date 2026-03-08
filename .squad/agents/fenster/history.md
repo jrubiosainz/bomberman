@@ -437,3 +437,23 @@
 **Files Modified:** src/menu.ts
 
 **Coordination:** McManus already removed `apiKey` from `LLMConfig` type and added `LLMPlayer.checkAuth()` static method. main.ts was already clean — no apiKey references.
+### 2026-03-08: LLM Viewport Optimization — McManus Resilience Work
+
+**Cross-Agent Update — McManus Work Impact:**
+
+McManus completed exponential backoff and rate limiting resilience for LLM player. Relevant rendering change:
+
+**Compact Viewport for Large Grids:**
+- Grids wider than 15 tiles now use 11×11 centered viewport
+- Reduces state payload sent to LLM API by ~60%
+- Example: 21×15 grid (315 cells) → 121 cells visible
+- Fenster note: Renderer remains unchanged, LLM player handles viewport internally
+- No impact to rendering logic, enemy positions outside viewport marked "(outside window)"
+
+**For Future Rendering Enhancement:**
+- Could add visual indicator of "viewport boundary" when LLM viewport differs from full grid
+- Not required — LLM operates seamlessly with compact state
+- Full grid still rendered normally by Fenster's renderer
+
+**Related Decision:** Decision 6: LLM Player Resilience & Rate Limit Handling
+

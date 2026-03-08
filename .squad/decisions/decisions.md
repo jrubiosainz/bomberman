@@ -139,6 +139,138 @@
 
 ---
 
+### Decision 4: Revolution Engine Architecture
+
+**Date:** 2026-01-XX | **Author:** McManus | **Status:** Implemented
+
+**Context:** Game engine expansion from single-level Bomberman to full 5-level campaign with progressive difficulty, LLM player support, lives system, and advanced enemy AI.
+
+**Decision:** Complete engine rewrite maintaining pure functional core while adding multi-level progression, LLM player controller, lives/scoring, smart enemy AI, and event-based sound/particle systems.
+
+**Key Principles:**
+1. Pure Functional Core: `update(state, actions, dt) → newState` with zero mutations
+2. Configuration-Driven: LEVEL_CONFIGS array defines all 5 levels with grid size, difficulty, theme
+3. Smart Enemy AI: enemySmartness probability scales from 0.1 to 0.8 across levels
+4. Lives & Respawn: Player starts with 3 lives, respawns at (1,1) on death, game over at 0 lives
+5. Score System: Points for kills (100), wall breaks (10), powerups (50), level clear (500)
+6. Event-Based Systems: Sound and particle events as data, consumed by renderer/audio
+7. LLM Player: Async tick pattern with ASCII art serialization for vision-language models
+
+**Implementation:**
+- Dynamic tile sizing: `Math.floor(Math.min(900 / gridWidth, 60))`
+- Configurable enemy count, speed, and smartness per level
+- Level transitions preserve lives and score
+- Graceful LLM fallback to random action on error
+
+**Consequences:**
+- ✅ Seamless multi-level progression
+- ✅ Pure functions remain testable and deterministic
+- ✅ Easy to add new levels (just extend LEVEL_CONFIGS)
+- ✅ LLM player enables AI vs AI gameplay
+- ⚠️ Event arrays cleared each frame (minimal memory overhead)
+
+**Team Impact:**
+- McManus owns core logic (game.ts, engine systems)
+- Fenster integrates rendering (menus, level select, victory screens)
+- Clear separation enables parallel development
+
+**Status:** Implemented and integrated with all systems operational.
+
+---
+
+### Decision 5: Visual Revolution Architecture Decisions
+
+**Date:** 2026-03-08 | **Author:** Fenster | **Status:** Implemented
+
+**Context:** Creating "night and day" visual difference from original with spectacular graphics, full menu system, and LLM integration display for multi-level Bomberman engine.
+
+**Decision:** Implement theme-based rendering system with canvas-only menus, standalone particle system, game mode state machine, and dynamic canvas sizing.
+
+**Key Architectural Choices:**
+
+1. **Theme-Based Rendering System** — 5 complete visual themes (Garden, Dungeon, Lava, Ice, Dark) with distinct color palettes and animations. ThemePalette interface provides clean lookup.
+
+2. **Canvas-Only Menu System** — All menus rendered on canvas (not DOM) for visual consistency with game. Same font rendering, glow effects, particle backgrounds.
+
+3. **Particle System as Separate Module** — Standalone ParticleSystem class in particles.ts. Renderer focuses on theme/entity rendering, particles have distinct lifecycle.
+
+4. **Game Mode State Machine** — 8 modes: MainMenu, LevelSelect, LLMSetup, Playing, LLMPlaying, LevelTransition, GameOver, Victory. Clear separation of concerns, mode-specific logic isolated.
+
+5. **LLM Overlay as Renderer Feature** — Renders AI status overlay (thinking, reasoning, model) inside renderer. Adapts to canvas size, uses same text wrapping as game HUD.
+
+6. **Dynamic Canvas Sizing** — Canvas resizes based on level (gameplay) or fixed 900×600 (menus). Tile size computed per level for crisp rendering.
+
+**Implementation:**
+- `resizeCanvas(config?)` handles menu vs gameplay sizing
+- `renderLLMOverlay(llmInfo, state)` displays AI status
+- `processEvents(events)` spawns particles from game events
+- Mode handlers route game loop to appropriate state
+
+**Consequences:**
+- ✅ Unique visual identity across 5 themes
+- ✅ Zero CSS/DOM complexity, consistent aesthetic
+- ✅ Perfect scaling from 13×11 to 21×15 grids
+- ✅ Particle system easy to extend (500 cap maintains performance)
+- ✅ LLM integration clean and unobtrusive
+- ⚠️ Canvas-only text input less feature-rich than DOM inputs
+
+**Lessons:**
+- Theme approach scales well for future levels
+- Canvas-only menus eliminated CSS/DOM headaches
+- Mode state machine is maintainable and extensible
+- Dynamic sizing worked flawlessly across all levels
+
+**Status:** Implemented and integrated with all visual systems operational.
+
+---
+
+### Decision 6: LLM Player Resilience & Rate Limit Handling
+
+**Date:** 2026-03-08 | **Author:** McManus | **Status:** Implemented
+
+**Context:** LLM player hitting rate limits on Level 2+ with large models (Claude Opus 4.5, GPT-5.4). User saw "Too many errors, waiting..." permanently stuck. GitHub Models API rate limits were saturated by aggressive 0.5s polling intervals.
+
+**Problem:**
+1. Too aggressive polling: LLM_TICK_INTERVAL = 0.5s way too fast for rate-limited APIs
+2. Permanent failure: errorCount > 5 gave up forever, never recovering
+3. No backoff: Retried at same interval on error, compounding rate limit issues
+4. Large state payloads: Level 2+ grids sent 195-315 grid cells per request
+5. No rate limit detection: HTTP 429 responses treated like generic errors
+6. Poor UX: Ambiguous and permanent failure message
+
+**Decision:** Implement exponential backoff, recovery cooldown, HTTP 429 detection, and compact state serialization.
+
+**Implementation:**
+1. **Base interval increased**: LLM_TICK_INTERVAL from 0.5s → 1.5s (3× slower baseline)
+2. **Exponential backoff**: On each error, interval doubles (max 30s). Resets on success.
+3. **Cooldown recovery**: After 5 errors, enter 10-second cooldown, then reset and retry. **Never permanently give up.**
+4. **Rate limit detection**: HTTP 429 responses extract Retry-After header and set cooldown timer accordingly.
+5. **Compact state**: Grids >15 wide send only 11×11 window centered on player. Reduces token usage ~60% on large levels.
+6. **Better error display**: Show "Retrying in 7s..." countdown instead of permanent failure message.
+
+**Rationale:**
+- Exponential backoff is standard for rate-limited APIs (prevents thundering herd)
+- Cooldown recovery borrowed from circuit breaker pattern (temporary ≠ permanent failure)
+- Compact state critical for large grids (21×15 grid: 315 cells → 121 cells = 61% reduction)
+- HTTP 429 detection enables respectful API usage
+- Never give up aligns with user expectations
+
+**Consequences:**
+- ✅ Large models work on Level 2+ without immediate failure
+- ✅ LLM self-recovers from rate limits after cooldown
+- ✅ Token usage reduced ~60% on large grids
+- ✅ Helpful countdown display instead of permanent failure
+- ✅ Respectful API usage with Retry-After support
+- ⚠️ Slightly slower decision-making (1.5s vs 0.5s), but necessary for stability
+
+**Files Modified:**
+- src/constants.ts: LLM_TICK_INTERVAL 0.5 → 1.5
+- src/llm-player.ts: Added backoff, recovery, HTTP 429 handling, compact state
+
+**Status:** Implemented, TypeScript clean, pushed to main.
+
+---
+
 ## Decision Archive
 
 *(No previous archived decisions from this sprint)*
