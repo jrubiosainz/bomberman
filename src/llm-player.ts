@@ -139,10 +139,10 @@ export class LLMPlayer {
       output += 'GRID:\n';
     }
 
-    // Grid visualization
-    for (let row = 0; row < grid.length; row++) {
+    // Grid visualization (respects compact window when active)
+    for (let row = startRow; row < endRow; row++) {
       let line = '';
-      for (let col = 0; col < grid[row].length; col++) {
+      for (let col = startCol; col < endCol; col++) {
         // Check for entities at this position
         const hasPlayer = player.gridPos.row === row && player.gridPos.col === col && player.alive;
         const hasEnemy = enemies.some(e => e.alive && e.gridPos.row === row && e.gridPos.col === col);
@@ -261,11 +261,14 @@ Respond with JSON ONLY: {"action": "up"|"down"|"left"|"right"|"bomb"|"wait", "re
     if (!response.ok) {
       // Check for rate limit (HTTP 429)
       if (response.status === 429) {
-        // Try to extract Retry-After header
         const retryAfter = response.headers.get('Retry-After');
         const waitTime = retryAfter ? parseInt(retryAfter, 10) : 10;
         this.retryAfter = waitTime;
         throw new Error(`Rate limited (HTTP 429). Retrying after ${waitTime}s...`);
+      }
+      // Treat 500/502/503/504 as transient — backoff and retry
+      if (response.status >= 500) {
+        throw new Error(`Server error (${response.status}). Will retry with backoff...`);
       }
       throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
     }

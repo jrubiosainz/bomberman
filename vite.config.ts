@@ -41,7 +41,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/chat/completions': {
-        target: 'https://models.github.com',
+        target: 'https://models.inference.ai.azure.com',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
         configure: (proxy) => {
